@@ -1,0 +1,63 @@
+function f(a int, b int) {
+    return a + b - a * b / a % 5;
+}
+
+struct Pessoa {
+    nome string;
+    idade int;
+    peso float;
+}
+
+enum Resposta {
+    resultado int;
+    erro string;
+}
+
+procedure main() {
+    // declara a variável x
+    x int;
+    y float = 10.0;
+    z string;
+    w bool;
+
+    const a infer = 15;
+
+    x = 1;
+    if (x <= 0) {
+        imprimir("ok!");
+    } else {
+        imprimir("erro!");
+    }
+
+    match (x) {
+        case 0: imprimir("zero");
+        case 1: imprimir("um");
+        default: imprimir("outro");
+    }
+
+    while (w == false) {
+        w = true;
+    }
+
+    z = "";
+
+    repeat {
+        y += 1;
+    } until (y >= 10);
+
+    p Pessoa;
+
+    p.idade = 25;
+
+    a__ infer = Pessoa(".\"..", 25, 85.0);
+
+    and
+    &&
+    or
+    ||
+    not
+    !
+    x ^ 5;
+
+    +=
+}
