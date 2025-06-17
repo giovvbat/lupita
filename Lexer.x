@@ -1,5 +1,7 @@
 {
-module Main (main) where
+module Lexer where
+
+import System.IO
 }
 
 %wrapper "basic"
@@ -21,6 +23,12 @@ tokens :-
   struct                               { \s -> Struct }
   enum                                 { \s -> Enum }
   const                                { \s -> Const }
+  int                                  { \s -> Type s }
+  float                                { \s -> Type s }
+  bool                                 { \s -> Type s }
+  string                               { \s -> Type s }
+  vector                               { \s -> Type s }
+  matrix                               { \s -> Type s }
   "{"                                  { \s -> BracketLeft }
   "}"                                  { \s -> BracketRight }
   "["                                  { \s -> BraceLeft }
@@ -121,7 +129,8 @@ data Token =
   String String
   deriving (Eq,Show)
 
-main = do
-  s <- getContents
-  print (alexScanTokens s)
+getTokens fn = do
+    fh <- openFile fn ReadMode;
+    s <- hGetContents fh;
+    return (alexScanTokens s)
 }
