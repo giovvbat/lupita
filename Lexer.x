@@ -29,6 +29,8 @@ tokens :-
   string                               { \s -> Type s }
   vector                               { \s -> Type s }
   matrix                               { \s -> Type s }
+  true                                 { \s -> TrueToken }
+  false                                { \s -> FalseToken }
   "{"                                  { \s -> BracketLeft }
   "}"                                  { \s -> BracketRight }
   "["                                  { \s -> BraceLeft }
@@ -88,6 +90,8 @@ data Token =
   SubAssign |
   MulAssign |
   DivAssign |
+  TrueToken |
+  FalseToken |
   RemAssign |
   PowAssign |
   Add    |
