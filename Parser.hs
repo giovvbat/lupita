@@ -1,14 +1,15 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
 {-# HLINT ignore "Use camelCase" #-}
 module Main (main) where
 
+import Control.Arrow (Arrow (first))
+import Control.Monad (Monad (return))
+import GHC.Float (divideDouble)
+import GHC.IO.Device (RawIO (read))
 import Lexer
 import Text.Parsec
-import GHC.IO.Device (RawIO(read))
-import Control.Arrow (Arrow(first))
-import Text.Parsec.Token (GenTokenParser(decimal))
-import Control.Monad (Monad(return))
-import GHC.Float (divideDouble)
+import Text.Parsec.Token (GenTokenParser (decimal))
 
 -- parsers para os tokens
 
@@ -323,25 +324,25 @@ program = do
 
 declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 declarations =
-  try (do
-      d <- declaration
-      rest <- declarations
-      return (d ++ rest)
-  )
-  <|>
-  (do
-      d <- declaration_assignment
-      rest <- declarations
-      return (d ++ rest)
-  )
-  <|> return []
+  try
+    ( do
+        d <- declaration
+        rest <- declarations
+        return (d ++ rest)
+    )
+    <|> ( do
+            d <- declaration_assignment
+            rest <- declarations
+            return (d ++ rest)
+        )
+    <|> return []
 
 declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
 declaration = do
-    a <- idToken
-    b <- typeToken
-    c <- semiColonToken
-    return ([a] ++ [b] ++ [c])
+  a <- idToken
+  b <- typeToken
+  c <- semiColonToken
+  return ([a] ++ [b] ++ [c])
 
 declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
 declaration_assignment = do
@@ -357,18 +358,17 @@ m = procedure
 
 subprograms :: ParsecT [Token] [(Token, Token)] IO [Token]
 subprograms =
-  (do
+  ( do
       f <- function
       rest <- subprograms
       return (f ++ rest)
   )
-  <|>
-  (do
-      p <- procedure
-      rest <- subprograms
-      return (p ++ rest)
-  )
-  <|> return []
+    <|> ( do
+            p <- procedure
+            rest <- subprograms
+            return (p ++ rest)
+        )
+    <|> return []
 
 procedure :: ParsecT [Token] [(Token, Token)] IO [Token]
 procedure = do
@@ -453,22 +453,17 @@ expressions = do
 
 remaining_expressions :: ParsecT [Token] [(Token, Token)] IO [Token]
 remaining_expressions =
-  (do
-    a <- commaToken
-    b <- expression
-    return (a : b)
+  ( do
+      a <- commaToken
+      b <- expression
+      return (a : b)
   )
-  <|> return []
+    <|> return []
 
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression =
   try function_call
-  <|>
-  try term
-  <|>
-  try add
-  <|>
-  try minus
+    <|> chainl1 term addMinusOp
 
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_call = do
@@ -479,47 +474,20 @@ function_call = do
   return ([a, b] ++ c ++ [d])
 
 term :: ParsecT [Token] [(Token, Token)] IO [Token]
-term =
-  try multiply
-  <|>
-  try divide
-  <|>
-  try (do
-    a <- factor
-    return [a]
-  )
+term = chainl1 (fmap (: []) factor) mulDivOp
 
+addMinusOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+addMinusOp =
+  (do op <- addToken; return (\a b -> a ++ [op] ++ b))
+    <|> (do op <- divToken; return (\a b -> a ++ [op] ++ b))
 
-add :: ParsecT [Token] [(Token, Token)] IO [Token]
-add = do
-  a <- expression
-  b <- addToken
-  c <- term
-  return (a ++ [b] ++ c)
-
-minus :: ParsecT [Token] [(Token, Token)] IO [Token]
-minus = do
-  a <- expression
-  b <- subToken
-  c <- term
-  return (a ++ [b] ++ c)
-
-multiply :: ParsecT [Token] [(Token, Token)] IO [Token]
-multiply = do
-  a <- term
-  b <- mulToken
-  c <- factor
-  return (a ++ [b] ++ [c])
-
-divide :: ParsecT [Token] [(Token, Token)] IO [Token]
-divide = do
-  a <- term
-  b <- divToken
-  c <- factor
-  return (a ++ [b] ++ [c])
+mulDivOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+mulDivOp =
+  (do op <- mulToken; return (\a b -> a ++ [op] ++ b))
+    <|> (do op <- divToken; return (\a b -> a ++ [op] ++ b))
 
 factor :: ParsecT [Token] [(Token, Token)] IO Token
-factor = idToken <|> intToken <|> floatToken
+factor = try idToken <|> try intToken <|> try floatToken
 
 -- funções para a tabela de símbolos
 
