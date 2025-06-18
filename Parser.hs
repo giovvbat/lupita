@@ -8,6 +8,7 @@ import GHC.IO.Device (RawIO(read))
 import Control.Arrow (Arrow(first))
 import Text.Parsec.Token (GenTokenParser(decimal))
 import Control.Monad (Monad(return))
+import GHC.Float (divideDouble)
 
 -- parsers para os tokens
 
@@ -349,10 +350,7 @@ declaration_assignment = do
   c <- assignToken
   d <- expression
   e <- semiColonToken
-  return ([a] ++ [b] ++ [c] ++ [d])
-
-expression :: ParsecT [Token] [(Token, Token)] IO Token
-expression = intToken
+  return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
 m :: ParsecT [Token] [(Token, Token)] IO [Token]
 m = procedure
@@ -446,6 +444,82 @@ remaining_stmts =
       assign
   )
     <|> return []
+
+expressions :: ParsecT [Token] [(Token, Token)] IO [Token]
+expressions = do
+  first <- expression
+  next <- remaining_expressions
+  return (first ++ next)
+
+remaining_expressions :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_expressions =
+  (do
+    a <- commaToken
+    b <- expression
+    return (a : b)
+  )
+  <|> return []
+
+expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+expression =
+  try function_call
+  <|>
+  try term
+  <|>
+  try add
+  <|>
+  try minus
+
+function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
+function_call = do
+  a <- idToken
+  b <- parenLeftToken
+  c <- expressions
+  d <- parenRightToken
+  return ([a, b] ++ c ++ [d])
+
+term :: ParsecT [Token] [(Token, Token)] IO [Token]
+term =
+  try multiply
+  <|>
+  try divide
+  <|>
+  try (do
+    a <- factor
+    return [a]
+  )
+
+
+add :: ParsecT [Token] [(Token, Token)] IO [Token]
+add = do
+  a <- expression
+  b <- addToken
+  c <- term
+  return (a ++ [b] ++ c)
+
+minus :: ParsecT [Token] [(Token, Token)] IO [Token]
+minus = do
+  a <- expression
+  b <- subToken
+  c <- term
+  return (a ++ [b] ++ c)
+
+multiply :: ParsecT [Token] [(Token, Token)] IO [Token]
+multiply = do
+  a <- term
+  b <- mulToken
+  c <- factor
+  return (a ++ [b] ++ [c])
+
+divide :: ParsecT [Token] [(Token, Token)] IO [Token]
+divide = do
+  a <- term
+  b <- divToken
+  c <- factor
+  return (a ++ [b] ++ [c])
+
+factor :: ParsecT [Token] [(Token, Token)] IO Token
+factor = idToken <|> intToken <|> floatToken
 
 -- funções para a tabela de símbolos
 
