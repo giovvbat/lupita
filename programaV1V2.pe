@@ -1,4 +1,4 @@
-a int = 10;
+a int = func(10 + 1) * 2;
 b string;
 
 function teste(a int, b int) string {

@@ -461,9 +461,7 @@ remaining_expressions =
     <|> return []
 
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-expression =
-  try function_call
-    <|> chainl1 term addMinusOp
+expression = chainl1 term addMinusOp
 
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_call = do
@@ -474,7 +472,7 @@ function_call = do
   return ([a, b] ++ c ++ [d])
 
 term :: ParsecT [Token] [(Token, Token)] IO [Token]
-term = chainl1 (fmap (: []) factor) mulDivOp
+term = chainl1 factor mulDivOp
 
 addMinusOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 addMinusOp =
@@ -486,8 +484,12 @@ mulDivOp =
   (do op <- mulToken; return (\a b -> a ++ [op] ++ b))
     <|> (do op <- divToken; return (\a b -> a ++ [op] ++ b))
 
-factor :: ParsecT [Token] [(Token, Token)] IO Token
-factor = try idToken <|> try intToken <|> try floatToken
+factor :: ParsecT [Token] [(Token, Token)] IO [Token]
+factor =
+  try function_call
+    <|> fmap (: []) idToken
+    <|> fmap (: []) intToken
+    <|> fmap (: []) floatToken
 
 -- funções para a tabela de símbolos
 
