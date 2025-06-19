@@ -72,7 +72,7 @@ tokens :-
   $digit+                              { \s -> Int (read s) }
   \_? [$alpha] [$alpha $digit \_]*         { \s -> Id s }
   \"[$char \\.]*\"                     { \s -> String (read s)}
-
+  EOF                                  { \s -> EOF }
 {
 -- Each action has type :: String -> Token
 
@@ -130,7 +130,8 @@ data Token =
   Id String |
   Float Float |
   Int Int |
-  String String
+  String String |
+  EOF 
   deriving (Eq,Show)
 
 getTokens fn = do

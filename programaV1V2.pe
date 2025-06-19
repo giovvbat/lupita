@@ -1,14 +1,30 @@
+enum oi {
+    a int;
+    x float;
+}
+
+struct oi {
+    a int;
+    b string;
+    c float;
+}
+
 a int = func(10 + 1) * 2;
 b string;
 
-function teste(a int, b int) string {
-    a = 10;
+function teste(a int, b int, c int) int {
+    galileu = 10;
+    
+    match (oi) {
+        case 9: x = 11;
+        default: x = 10;
+    }
 }
 
-procedure teste(a int, b int) {
-    a = 10;
-}
-
-procedure teste(a int, b int) {
-    a = 10;
+procedure teste(a int) {
+    if (oi(7)) {
+        x = 20;
+    } else {
+        x = 10;
+    }
 }
