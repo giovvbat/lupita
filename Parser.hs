@@ -11,6 +11,8 @@ import Lexer
 import Text.Parsec
 import Text.Parsec.Token (GenTokenParser (decimal, semi, comma))
 import GHC.RTS.Flags (TraceFlags(user))
+import Data.Foldable (all)
+import Data.Function (const)
 
 -- parsers para os tokens
 
@@ -242,6 +244,18 @@ untilToken = tokenPrim show update_pos get_token
     get_token Until = Just Until
     get_token _ = Nothing
 
+trueToken :: ParsecT [Token] st IO Token
+trueToken = tokenPrim show update_pos get_token
+  where
+    get_token TrueToken = Just TrueToken
+    get_token _ = Nothing
+
+falseToken :: ParsecT [Token] st IO Token
+falseToken = tokenPrim show update_pos get_token
+  where
+    get_token FalseToken = Just FalseToken
+    get_token _ = Nothing
+
 equalToken :: ParsecT [Token] st IO Token
 equalToken = tokenPrim show update_pos get_token
   where
@@ -311,47 +325,66 @@ stringToken = tokenPrim show update_pos get_token
     get_token (String x) = Just (String x)
     get_token _ = Nothing
 
-eofToken :: ParsecT [Token] st IO Token
-eofToken = tokenPrim show update_pos get_token
+guessToken :: ParsecT [Token] st IO Token
+guessToken = tokenPrim show update_pos get_token
   where
-    get_token EOF = Just EOF
-    get_token _   = Nothing
+    get_token Guess = Just Guess
+    get_token _ = Nothing
+
+mainToken :: ParsecT [Token] st IO Token
+mainToken = tokenPrim show update_pos get_token
+  where
+    get_token Main = Just Main
+    get_token _ = Nothing
 
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
-update_pos pos _ (next : _) = incSourceColumn pos 1 -- Avança um token
-update_pos pos _ [] = pos -- Fim do código-fonte
+update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
+update_pos pos _ [] = pos -- fim do código-fonte
 
 -- parsers para os não-terminais
 
 program :: ParsecT [Token] [(Token, Token)] IO [Token]
 program = do
-  a <- user_defined_types
-  b <- declarations
-  c <- subprograms
+  a <- initial_declarations
+  b <- subprograms
+  c <- m
+  eof
   return (a ++ b ++ c)
 
-user_defined_types :: ParsecT [Token] [(Token, Token)] IO [Token]
-user_defined_types =
-  (do
-    a <- struct
-    rest <- remaining_user_defined_types
-    return (a ++ rest)
+initial_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
+initial_declarations = initial_declaration <|> return []
+
+initial_declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
+initial_declaration = 
+  try (do
+    a <- user_defined_types
+    b <- remaining_initial_declarations
+    return (a ++ b)
   )
-  <|> (do
-    b <- enum
-    rest <- remaining_user_defined_types
-    return (b ++ rest)
+  <|>
+  try (do
+    a <- declaration
+    b <- remaining_initial_declarations
+    return (a ++ b)
+  )
+  <|>
+  try (do
+    a <- declaration_assignment
+    b <- remaining_initial_declarations
+    return (a ++ b)
+  )
+
+remaining_initial_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_initial_declarations =
+  (do
+    a <- initial_declaration
+    b <- remaining_initial_declarations
+    return (a ++ b)
   )
   <|> return []
 
-remaining_user_defined_types :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_user_defined_types =
-  (do
-    a <- try struct <|> try enum
-    rest <- remaining_user_defined_types
-    return (a ++ rest)
-  )
-  <|> return []
+user_defined_types :: ParsecT [Token] [(Token, Token)] IO [Token]
+user_defined_types = enum <|> struct
 
 struct :: ParsecT [Token] [(Token, Token)] IO [Token]
 struct = do
@@ -373,33 +406,33 @@ enum = do
 
 user_defined_types_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 user_defined_types_declarations = do
-  first <- declaration
+  first <- try declaration <|> try declaration_assignment
   next <- remaining_user_defined_types_declarations
   return (first ++ next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 remaining_user_defined_types_declarations = 
   (do
-    a <- declaration
+    first <- try declaration <|> try declaration_assignment
     rest <- remaining_user_defined_types_declarations
-    return (a ++ rest)
+    return (first ++ rest)
   )
   <|> return []
   
 declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 declarations =
-  try
-    ( do
-        d <- declaration
-        rest <- declarations
-        return (d ++ rest)
-    )
-    <|> ( do
-            d <- declaration_assignment
-            rest <- declarations
-            return (d ++ rest)
-        )
-    <|> return []
+  try (do
+    d <- declaration
+    rest <- declarations
+    return (d ++ rest)
+  )
+  <|> 
+  try (do
+    d <- declaration_assignment
+    rest <- declarations
+    return (d ++ rest)
+  )
+  <|> return []
 
 declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
 declaration = do
@@ -418,22 +451,42 @@ declaration_assignment = do
   e <- semiColonToken
   return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
+guess_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
+guess_declaration_assignment = do
+  a <- idToken
+  b <- guessToken
+  c <- assignToken
+  d <- expression
+  e <- semiColonToken
+  --- updateState (symtable_insert (b, get_default_value c))
+  return ([a] ++ [b] ++ [c] ++ d ++ [e])
+
 m :: ParsecT [Token] [(Token, Token)] IO [Token]
-m = procedure
+m = do
+  a <- procedureToken
+  b <- mainToken
+  c <- parenLeftToken
+  d <- params
+  e <- parenRightToken
+  f <- bracketLeftToken
+  g <- stmts
+  h <- bracketRightToken
+  return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
 
 subprograms :: ParsecT [Token] [(Token, Token)] IO [Token]
 subprograms =
-  ( do
-      f <- function
-      rest <- subprograms
-      return (f ++ rest)
+  try (do
+    f <- function
+    rest <- subprograms
+    return (f ++ rest)
   )
-    <|> ( do
-            p <- procedure
-            rest <- subprograms
-            return (p ++ rest)
-        )
-    <|> return []
+  <|> 
+  try (do
+    p <- procedure
+    rest <- subprograms
+    return (p ++ rest)
+  )
+  <|> return []
 
 procedure :: ParsecT [Token] [(Token, Token)] IO [Token]
 procedure = do
@@ -467,21 +520,23 @@ param = do
   return (a : [b])
 
 params :: ParsecT [Token] [(Token, Token)] IO [Token]
-params = (do
-  first <- param
-  next <- remainingParams
-  return (first ++ next)
-  ) <|> return []
+params = 
+  (do
+    first <- param
+    next <- remainingParams
+    return (first ++ next)
+  ) 
+  <|> return []
 
 remainingParams :: ParsecT [Token] [(Token, Token)] IO [Token]
 remainingParams =
-  ( do
-      a <- commaToken
-      b <- param
-      c <- remainingParams
-      return (a : b ++ c)
+  (do
+    a <- commaToken
+    b <- param
+    c <- remainingParams
+    return (a : b ++ c)
   )
-    <|> return []
+  <|> return []
 
 stmts :: ParsecT [Token] [(Token, Token)] IO [Token]
 stmts = do
@@ -490,16 +545,40 @@ stmts = do
   return (first ++ next)
 
 remaining_stmts :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_stmts = stmt
+remaining_stmts = 
+  (do
+    a <- stmt
+    b <- remaining_stmts
+    return (a ++ b)
+  ) 
   <|> return []
 
 stmt :: ParsecT [Token] [(Token, Token)] IO [Token]
-stmt = try loop <|> try conditional <|> try procedure_call <|> try assign <|> try declaration <|> try declaration_assignment <|> function_return
+stmt = 
+  try loop 
+  <|> try conditional 
+  <|> try procedure_call 
+  <|> try assign
+  <|> try declaration 
+  <|> try declaration_assignment 
+  <|> try function_return
+  <|> try declaration_assignment 
+  <|> try function_return
+
+all_assign_tokens :: ParsecT [Token] [(Token, Token)] IO Token
+all_assign_tokens =
+  try addAssignToken
+  <|> try subAssignToken
+  <|> try mulAssignToken
+  <|> try divAssignToken
+  <|> try remAssignToken
+  <|> try powAssignToken
+  <|> try assignToken
 
 assign :: ParsecT [Token] [(Token, Token)] IO [Token]
 assign = do
   a <- idToken
-  b <- assignToken
+  b <- all_assign_tokens
   c <- expression
   d <- semiColonToken
   -- updateState (symtable_update (a, c))
@@ -509,7 +588,7 @@ procedure_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 procedure_call = do
   a <- idToken
   b <- parenLeftToken
-  c <- expressions
+  c <- expressions <|> return []
   d <- parenRightToken
   e <- semiColonToken
   return ([a, b] ++ c ++ [d] ++ [e])
@@ -529,12 +608,13 @@ expressions = do
 
 remaining_expressions :: ParsecT [Token] [(Token, Token)] IO [Token]
 remaining_expressions =
-  ( do
-      a <- commaToken
-      b <- expression
-      return (a : b)
+  (do
+    a <- commaToken
+    b <- expression
+    c <- remaining_expressions
+    return (a : b ++ c)
   )
-    <|> return []
+  <|> return []
 
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression = chainl1 term addMinusOp
@@ -543,7 +623,7 @@ function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_call = do
   a <- idToken
   b <- parenLeftToken
-  c <- expressions
+  c <- expressions <|> return []
   d <- parenRightToken
   return ([a, b] ++ c ++ [d])
 
@@ -552,20 +632,34 @@ term = chainl1 factor mulDivOp
 
 addMinusOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 addMinusOp =
-  (do op <- addToken; return (\a b -> a ++ [op] ++ b))
-    <|> (do op <- divToken; return (\a b -> a ++ [op] ++ b))
+  (do 
+    op <- addToken
+    return (\a b -> a ++ [op] ++ b)
+  )
+  <|> 
+  (do
+    op <- divToken
+    return (\a b -> a ++ [op] ++ b)
+  )
 
 mulDivOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 mulDivOp =
-  (do op <- mulToken; return (\a b -> a ++ [op] ++ b))
-    <|> (do op <- divToken; return (\a b -> a ++ [op] ++ b))
+  (do 
+    op <- mulToken 
+    return (\a b -> a ++ [op] ++ b)
+  )
+  <|> 
+  (do 
+    op <- divToken 
+    return (\a b -> a ++ [op] ++ b)
+  )
 
 factor :: ParsecT [Token] [(Token, Token)] IO [Token]
-factor =
+factor = 
   try function_call
-    <|> fmap (: []) idToken
-    <|> fmap (: []) intToken
-    <|> fmap (: []) floatToken
+  <|> fmap (: []) idToken
+  <|> fmap (: []) intToken
+  <|> fmap (: []) floatToken
 
 loop :: ParsecT [Token] [(Token, Token)] IO [Token]
 loop = while <|> repeat_until <|> for
@@ -598,13 +692,21 @@ for = do
   a <- forToken
   b <- parenLeftToken
   c <- declaration
-  d <- assign
-  e <- assign
-  f <- parenRightToken
-  g <- bracketLeftToken
-  h <- stmts
-  i <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ d ++ e ++ [f] ++ [g] ++ h ++ [i])
+  d <- for_assign
+  e <- semiColonToken
+  f <- for_assign
+  g <- parenRightToken
+  h <- bracketLeftToken
+  i <- stmts
+  j <- bracketRightToken
+  return ([a] ++ [b] ++ c ++ d ++ [e] ++ f ++ [g] ++ [h]++ i ++ [j])
+
+for_assign :: ParsecT [Token] [(Token, Token)] IO [Token]
+for_assign = do
+  a <- idToken
+  b <- all_assign_tokens
+  c <- expression
+  return ([a] ++ [b] ++ c)
 
 conditional :: ParsecT [Token] [(Token, Token)] IO [Token]
 conditional = if_else <|> match_case

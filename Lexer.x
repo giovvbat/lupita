@@ -6,14 +6,15 @@ import System.IO
 
 %wrapper "basic"
 
-$digit = 0-9      -- digits
-$alpha = [a-zA-Z]   -- alphabetic characters
+$digit = 0-9
+$alpha = [a-zA-Z]
 $char = [^"\\]
 
 tokens :-
 
   $white+                              ;
   "//".*                               ;
+  main                                 { \s -> Main }
   procedure                            { \s -> Procedure }
   function                             { \s -> Function }
   ";"                                  { \s -> SemiColon}
@@ -23,6 +24,7 @@ tokens :-
   struct                               { \s -> Struct }
   enum                                 { \s -> Enum }
   const                                { \s -> Const }
+  guess                                { \s -> Guess }
   int                                  { \s -> Type s }
   float                                { \s -> Type s }
   bool                                 { \s -> Type s }
@@ -70,14 +72,14 @@ tokens :-
   default                              { \s -> Default}
   $digit+\.$digit+                     { \s -> Float (read s) }
   $digit+                              { \s -> Int (read s) }
-  \_? [$alpha] [$alpha $digit \_]*         { \s -> Id s }
+  \_? [$alpha] [$alpha $digit \_]*     { \s -> Id s }
   \"[$char \\.]*\"                     { \s -> String (read s)}
-  EOF                                  { \s -> EOF }
 {
 -- Each action has type :: String -> Token
 
 -- The token type:
 data Token =
+  Main    |
   Procedure |
   Function |
   Comma   |
@@ -125,13 +127,13 @@ data Token =
   Less |
   LessEq |
   Struct |
+  Guess |
   Enum |
   Type String |
   Id String |
   Float Float |
   Int Int |
-  String String |
-  EOF 
+  String String 
   deriving (Eq,Show)
 
 getTokens fn = do
