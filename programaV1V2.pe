@@ -1,8 +1,10 @@
+b guess = 10;
+
 b string = 10;
 
 enum oi {
-    a int = in(7);
-    x float;
+    a guess = in(7);
+    x const float = 7;
 }
 
 struct teste {
@@ -21,12 +23,15 @@ enum testteee {
 // comentario
 
 function teste() int {
-    galileu += oi();
+    galileu const int = oi();
     
     match (oi()) {
         case 9: x = 11;
         default: xxxxxx *= 10;
     }
+
+    b = 10;
+    c guess = 10;
 
     for(i int; i=0; iiiiiii+=1) {
         i=1;
@@ -48,6 +53,8 @@ function teste() int {
 procedure main() {
     teste();
     x = 10;
+
+    iiiiiii int = 10000;
 }
 
 // comentario

@@ -11,8 +11,6 @@ import Lexer
 import Text.Parsec
 import Text.Parsec.Token (GenTokenParser (decimal, semi, comma))
 import GHC.RTS.Flags (TraceFlags(user))
-import Data.Foldable (all)
-import Data.Function (const)
 
 -- parsers para os tokens
 
@@ -55,6 +53,7 @@ constToken = tokenPrim show update_pos get_token
     get_token Const = Just Const
     get_token _ = Nothing
 
+assignToken :: ParsecT [Token] st IO Token
 assignToken = tokenPrim show update_pos get_token
   where
     get_token Assign = Just Assign
@@ -352,33 +351,21 @@ program = do
   return (a ++ b ++ c)
 
 initial_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
-initial_declarations = initial_declaration <|> return []
-
-initial_declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
-initial_declaration = 
+initial_declarations =
   try (do
     a <- user_defined_types
-    b <- remaining_initial_declarations
+    b <- initial_declarations
     return (a ++ b)
   )
   <|>
   try (do
-    a <- declaration
-    b <- remaining_initial_declarations
+    a <- variable_declarations
+    b <- initial_declarations
     return (a ++ b)
   )
-  <|>
-  try (do
-    a <- declaration_assignment
-    b <- remaining_initial_declarations
-    return (a ++ b)
-  )
-
-remaining_initial_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_initial_declarations =
-  (do
-    a <- initial_declaration
-    b <- remaining_initial_declarations
+  <|> try (do
+    a <- const_declarations
+    b <- initial_declarations
     return (a ++ b)
   )
   <|> return []
@@ -406,44 +393,35 @@ enum = do
 
 user_defined_types_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 user_defined_types_declarations = do
-  first <- try declaration <|> try declaration_assignment
+  first <- try variable_declarations <|> try const_declarations
   next <- remaining_user_defined_types_declarations
   return (first ++ next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 remaining_user_defined_types_declarations = 
   (do
-    first <- try declaration <|> try declaration_assignment
+    first <- try variable_declarations <|> try const_declarations
     rest <- remaining_user_defined_types_declarations
     return (first ++ rest)
   )
   <|> return []
   
-declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
-declarations =
-  try (do
-    d <- declaration
-    rest <- declarations
-    return (d ++ rest)
-  )
-  <|> 
-  try (do
-    d <- declaration_assignment
-    rest <- declarations
-    return (d ++ rest)
-  )
-  <|> return []
+variable_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
+variable_declarations =
+  try variable_declaration
+  <|> try variable_declaration_assignment
+  <|> try variable_guess_declaration_assignment
 
-declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
-declaration = do
+variable_declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
+variable_declaration = do
   a <- idToken
   b <- typeToken
   c <- semiColonToken
   updateState (symtable_insert (a, get_default_value b))
   return ([a] ++ [b] ++ [c])
 
-declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
-declaration_assignment = do
+variable_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
+variable_declaration_assignment = do
   a <- idToken
   b <- typeToken
   c <- assignToken
@@ -451,8 +429,8 @@ declaration_assignment = do
   e <- semiColonToken
   return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
-guess_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
-guess_declaration_assignment = do
+variable_guess_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
+variable_guess_declaration_assignment = do
   a <- idToken
   b <- guessToken
   c <- assignToken
@@ -460,6 +438,40 @@ guess_declaration_assignment = do
   e <- semiColonToken
   --- updateState (symtable_insert (b, get_default_value c))
   return ([a] ++ [b] ++ [c] ++ d ++ [e])
+
+const_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
+const_declarations =
+  try const_declaration
+  <|> try const_declaration_assignment
+  <|> try const_guess_declaration_assignment
+
+const_declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
+const_declaration = do
+  a <- idToken
+  b <- constToken
+  c <- typeToken
+  d <- semiColonToken
+  return ([a] ++ [b] ++ [c] ++ [d])
+
+const_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
+const_declaration_assignment = do
+  a <- idToken
+  b <- constToken
+  c <- typeToken
+  d <- assignToken
+  e <- expression
+  f <- semiColonToken
+  return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
+
+const_guess_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
+const_guess_declaration_assignment = do
+  a <- idToken
+  b <- constToken
+  c <- guessToken
+  d <- assignToken
+  e <- expression
+  f <- semiColonToken
+  return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
 
 m :: ParsecT [Token] [(Token, Token)] IO [Token]
 m = do
@@ -559,10 +571,9 @@ stmt =
   <|> try conditional 
   <|> try procedure_call 
   <|> try assign
-  <|> try declaration 
-  <|> try declaration_assignment 
+  <|> try variable_declarations
+  <|> try const_declarations
   <|> try function_return
-  <|> try declaration_assignment 
   <|> try function_return
 
 all_assign_tokens :: ParsecT [Token] [(Token, Token)] IO Token
@@ -691,7 +702,7 @@ for :: ParsecT [Token] [(Token, Token)] IO [Token]
 for = do
   a <- forToken
   b <- parenLeftToken
-  c <- declaration
+  c <- variable_declaration
   d <- for_assign
   e <- semiColonToken
   f <- for_assign
