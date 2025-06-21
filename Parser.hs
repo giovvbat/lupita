@@ -424,7 +424,7 @@ data_structures_contents =
     d <- greaterToken
     return ([a] ++ [b] ++ c ++ [d])
   )
-  <|> 
+  <|>
   try (do
     a <- try typeToken <|> try idToken
     return [a]
@@ -665,7 +665,7 @@ assign = do
   return ([a] ++ [b] ++ c ++ [d])
 
 procedure_call :: ParsecT [Token] [(Token, Token)] IO [Token]
-procedure_call = 
+procedure_call =
   try (do
     a <- idToken
     b <- parenLeftToken
@@ -699,18 +699,151 @@ remaining_expressions =
   )
   <|> return []
 
+-- expressão geral
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-expression = chainl1 term addMinusOp
+expression =
+  try (do
+    a <- parenLeftToken
+    b <- expression
+    c <- parenRightToken
+    return ([a] ++ b ++ [c])
+  )
+  <|> try function_call
+  <|> try data_structures_attribute_access
+  <|> try arithmetic_expression
+  -- <|> try boolean_expression
+  <|> try string_tokens
+  
 
-comparison :: ParsecT [Token] [(Token, Token)] IO [Token]
-comparison = do
-  a <- term
-  b <- comparison_op
-  c <- term
-  return (a ++ [b] ++ c)
+-- expressões aritméticas
+arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+arithmetic_expression = add_sub_expression
 
-comparison_op :: ParsecT [Token] [(Token, Token)] IO Token
-comparison_op =
+-- soma e subtração – associatividade à esquerda
+add_sub_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+add_sub_expression = chainl1 mul_div_rem_expression add_sub_op
+
+-- multiplicação, divisão e resto – associatividade à esquerda
+mul_div_rem_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+mul_div_rem_expression = chainl1 pow_expression mul_div_rem_op
+
+-- potência – associatividade à direita
+pow_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+pow_expression = chainr1 unary_expression pow_op
+
+-- unário (ex: -x)
+unary_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+unary_expression =
+  try (do
+    op <- unary_arithmetic_ops
+    expr <- unary_expression
+    return (op : expr)
+  )
+  <|> factor
+
+-- fatores: unidades atômicas da expressão
+factor :: ParsecT [Token] [(Token, Token)] IO [Token]
+factor =
+  try function_call
+  <|> fmap (:[]) idToken
+  <|> fmap (:[]) numeric_literal_tokens
+  <|> 
+  do
+    a <- parenLeftToken
+    b <- arithmetic_expression
+    c <- parenRightToken
+    return ([a] ++ b ++ [c])
+
+-- operadores binários
+add_sub_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+add_sub_op =
+  (do 
+    op <- addToken; 
+    return (\a b -> a ++ [op] ++ b)
+  )
+  <|>
+  (do 
+    op <- subToken; 
+    return (\a b -> a ++ [op] ++ b)
+  )
+
+mul_div_rem_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+mul_div_rem_op =
+  (do 
+    op <- mulToken; 
+    return (\a b -> a ++ [op] ++ b)
+  )
+  <|>
+  (do 
+    op <- divToken; 
+    return (\a b -> a ++ [op] ++ b)
+  )
+  <|>
+  (do 
+    op <- remToken; 
+    return (\a b -> a ++ [op] ++ b)
+  )
+
+pow_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+pow_op = do
+  op <- powToken
+  return (\a b -> a ++ [op] ++ b)
+
+-- operador unário
+unary_arithmetic_ops :: ParsecT [Token] [(Token, Token)] IO Token
+unary_arithmetic_ops = subToken
+
+-- expressões booleanas gerais
+boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+boolean_expression = or_expression
+
+-- OR (nível 0) – associatividade à esquerda
+or_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+or_expression = chainl1 and_expression or_op
+
+-- AND (nível 1) – associatividade à esquerda
+and_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+and_expression = chainl1 boolean_base_expression and_op
+
+-- operações unárias e comparações
+boolean_base_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+boolean_base_expression =
+  try unary_boolean_expression
+  <|> try comparison_expression
+  <|> 
+  try (do
+    a <- parenLeftToken
+    b <- boolean_expression
+    c <- parenRightToken
+    return ([a] ++ b ++ [c])
+  )
+
+-- NOT (nível 2) – prefixado
+unary_boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+unary_boolean_expression = do
+  op <- unary_boolean_ops
+  expr <- boolean_expression
+  return (op : expr)
+
+comparison_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+comparison_expression = do
+  a <- expression
+  op <- comparison_ops
+  b <- expression
+  return (a ++ [op] ++ b)
+
+or_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+or_op = do
+  op <- orToken
+  return (\a b -> a ++ [op] ++ b)
+
+and_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+and_op = do
+  op <- andToken
+  return (\a b -> a ++ [op] ++ b)
+
+comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
+comparison_ops =
   try equalToken
   <|> try notEqualToken
   <|> try greaterToken
@@ -718,8 +851,44 @@ comparison_op =
   <|> try lessToken
   <|> try lessEqToken
 
+unary_boolean_ops :: ParsecT [Token] [(Token, Token)] IO Token
+unary_boolean_ops = try notToken
+
+data_structures_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
+data_structures_attribute_access =
+  try user_defined_types_attribute_access
+  <|> try vector_content_access
+  <|> try matrix_content_access
+
+user_defined_types_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
+user_defined_types_attribute_access =
+  try (do
+    a <- idToken
+    b <- dotToken
+    c <- idToken
+    return ([a, b] ++ [c])
+  )
+
+vector_content_access :: ParsecT [Token] [(Token, Token)] IO [Token]
+vector_content_access = do
+  a <- idToken
+  b <- braceLeftToken
+  c <- expression
+  d <- braceRightToken
+  return ([a, b] ++ c ++ [d])
+
+matrix_content_access :: ParsecT [Token] [(Token, Token)] IO [Token]
+matrix_content_access = do
+  a <- idToken
+  b <- braceLeftToken
+  c <- expression
+  d <- commaToken
+  e <- expression
+  f <- braceRightToken
+  return ([a, b] ++ c ++ [d] ++ e ++ [f])
+
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
-function_call = 
+function_call =
   try (do
     a <- idToken
     b <- parenLeftToken
@@ -728,40 +897,6 @@ function_call =
     return ([a, b] ++ c ++ [d])
   )
   <|> try scan_function
-
-term :: ParsecT [Token] [(Token, Token)] IO [Token]
-term = chainl1 factor mulDivOp
-
-addMinusOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
-addMinusOp =
-  (do
-    op <- addToken
-    return (\a b -> a ++ [op] ++ b)
-  )
-  <|>
-  (do
-    op <- divToken
-    return (\a b -> a ++ [op] ++ b)
-  )
-
-mulDivOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
-mulDivOp =
-  (do
-    op <- mulToken
-    return (\a b -> a ++ [op] ++ b)
-  )
-  <|>
-  (do
-    op <- divToken
-    return (\a b -> a ++ [op] ++ b)
-  )
-
-factor :: ParsecT [Token] [(Token, Token)] IO [Token]
-factor =
-  try function_call
-  <|> fmap (: []) idToken
-  <|> fmap (: []) intToken
-  <|> fmap (: []) floatToken
 
 loop :: ParsecT [Token] [(Token, Token)] IO [Token]
 loop = while <|> repeat_until <|> for
@@ -873,12 +1008,20 @@ default_case = do
   c <- stmts
   return (a : b : c)
 
-all_literal_tokens :: ParsecT [Token] [(Token, Token)] IO Token
-all_literal_tokens =
+numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO Token
+numeric_literal_tokens =
   try intToken
   <|> try floatToken
-  <|> try stringToken
-  <|> try boolToken
+
+string_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
+string_tokens = do
+  a <- stringToken
+  return [a]
+
+boolean_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
+boolean_tokens = do
+  a <- boolToken
+  return [a]
 
 print_procedure :: ParsecT [Token] [(Token, Token)] IO [Token]
 print_procedure = do
@@ -895,6 +1038,8 @@ scan_function = do
   b <- parenLeftToken
   c <- parenRightToken
   return ([a] ++ [b] ++ [c])
+
+-- inicialização de vetores e matrizes (vector<>, matrix<>) (tamanho dinâmico? como inicializar?)
 
 -- funções para a tabela de símbolos
 
