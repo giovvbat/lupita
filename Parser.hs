@@ -628,7 +628,28 @@ remaining_expressions =
   <|> return []
 
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-expression = chainl1 term addMinusOp
+expression = chainl1 term addMinusOp 
+  -- <|> try comparison 
+  -- <|> 
+  -- try (do
+  --   a <- try all_literal_tokens
+  --   return [a]
+  -- )
+
+comparison :: ParsecT [Token] [(Token, Token)] IO [Token]
+comparison = do
+  a <- term
+  b <- comparison_op
+  c <- term
+  return (a ++ [b] ++ c)
+
+comparison_op :: ParsecT [Token] [(Token, Token)] IO Token
+comparison_op =
+  try equalToken
+  <|> try greaterToken
+  <|> try greaterEqToken
+  <|> try lessToken
+  <|> try lessEqToken
 
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_call = do
@@ -696,7 +717,8 @@ repeat_until = do
   f <- parenLeftToken
   g <- expression
   h <- parenRightToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h])
+  j <- semiColonToken
+  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
 
 for :: ParsecT [Token] [(Token, Token)] IO [Token]
 for = do
@@ -781,6 +803,14 @@ default_case = do
   c <- stmts
   return (a : b : c)
 
+all_literal_tokens :: ParsecT [Token] [(Token, Token)] IO Token
+all_literal_tokens =
+  try intToken
+  <|> try floatToken
+  <|> try stringToken
+  <|> try trueToken
+  <|> try falseToken
+
 -- funções para a tabela de símbolos
 
 get_default_value :: Token -> Token
@@ -788,7 +818,7 @@ get_default_value (Type "int") = Int 0
 
 symtable_insert :: (Token, Token) -> [(Token, Token)] -> [(Token, Token)]
 symtable_insert symbol [] = [symbol]
-symtable_insert symbol symtable = symtable ++ [symbol] -- Não detecta duplicatas.
+symtable_insert symbol symtable = symtable ++ [symbol] -- não detecta duplicatas
 
 symtable_update :: (Token, Token) -> [(Token, Token)] -> [(Token, Token)]
 symtable_update _ [] = fail "variable not found"
@@ -811,7 +841,7 @@ parser = runParserT program [] "Parsing error!"
 
 main :: IO ()
 main = do
-  tokens <- getTokens "programaV1V2.pe"
+  tokens <- getTokens "programa.pe"
   result <- parser tokens
   case result of
     Left err -> print err

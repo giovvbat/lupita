@@ -1,10 +1,10 @@
-b guess = 10;
+b const guess = 10;
 
 b string = 10;
 
 enum oi {
     a guess = in(7);
-    x const float = 7;
+    x float = 7;
 }
 
 struct teste {
@@ -23,7 +23,7 @@ enum testteee {
 // comentario
 
 function teste() int {
-    galileu const int = oi();
+    galileu guess = oi();
     
     match (oi()) {
         case 9: x = 11;
@@ -41,7 +41,7 @@ function teste() int {
 
     repeat {
         x = 11;
-    } until (teste(oi))
+    } until (teste(oi));
 
     a int;
 }
