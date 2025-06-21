@@ -1,7 +1,77 @@
-a bool = 1 + 1;
+b const guess = 10;
+
+b string = 10;
+
+enum oi {
+    a guess = in(7);
+    x float = 7;
+}
+
+teste vector<int>;
+
+teste2 matrix<vector<string>>;
+
+struct Teste {
+    a int = oi();
+}
+
+b string = oi();
+
+//true
+
+enum testteee {
+    a int;
+    x float;
+}
+
+Teste t;
+
+// comentario
+
+function teste() int {
+    galileu guess = oi();
+    
+    match (oi()) {
+        case 9: x = 11;
+        default: xxxxxx *= 10;
+    }
+
+    b = scan();
+
+    print(oi(8 + 2 / 3 + matrizz[i, i]) + struuuct.i + veeeetor[i]);
+
+    kchnka guess = 10;
+
+    for(i int; i=0; iiiiiii+=1) {
+        i=1;
+    }
+
+    oi string;
+
+    teste T;
+
+    teste vector<int>;
+
+    teste2 matrix<vector<string>>;
+
+    repeat {
+        x = 11;
+    } until (teste(oi));
+
+    a int;
+}
+
+function teste() int {
+    oi();
+}
 
 procedure main() {
-    iiiiiii bool = oi(2 * (5 % 10)) + stri[1, 2];
+    teste();
+    x = 10;
+
+    teste t;
+
+    iiiiiii bool = 10000;
 }
 
 // comentario

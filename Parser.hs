@@ -702,18 +702,16 @@ remaining_expressions =
 -- expressão geral
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression =
+  try arithmetic_expression
+  -- <|> try boolean_expression
+  <|> try string_tokens
+  <|>
   try (do
     a <- parenLeftToken
     b <- expression
     c <- parenRightToken
     return ([a] ++ b ++ [c])
   )
-  <|> try function_call
-  <|> try data_structures_attribute_access
-  <|> try arithmetic_expression
-  -- <|> try boolean_expression
-  <|> try string_tokens
-  
 
 -- expressões aritméticas
 arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -745,6 +743,7 @@ unary_expression =
 factor :: ParsecT [Token] [(Token, Token)] IO [Token]
 factor =
   try function_call
+  <|> try data_structures_attribute_access
   <|> fmap (:[]) idToken
   <|> fmap (:[]) numeric_literal_tokens
   <|> 
