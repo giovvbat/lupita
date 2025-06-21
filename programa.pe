@@ -7,7 +7,11 @@ enum oi {
     x float = 7;
 }
 
-struct teste {
+teste vector<int>;
+
+teste2 matrix<vector<string>>;
+
+struct Teste {
     a int = oi();
 }
 
@@ -19,6 +23,8 @@ enum testteee {
     a int;
     x float;
 }
+
+Teste t;
 
 // comentario
 
@@ -39,6 +45,12 @@ function teste() int {
 
     oi string;
 
+    teste T;
+
+    teste vector<int>;
+
+    teste2 matrix<vector<string>>;
+
     repeat {
         x = 11;
     } until (teste(oi));
@@ -54,7 +66,9 @@ procedure main() {
     teste();
     x = 10;
 
-    iiiiiii int = 10000;
+    teste t;
+
+    iiiiiii bool = 10000;
 }
 
 // comentario

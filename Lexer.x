@@ -29,8 +29,8 @@ tokens :-
   float                                { \s -> Type s }
   bool                                 { \s -> Type s }
   string                               { \s -> Type s }
-  vector                               { \s -> Type s }
-  matrix                               { \s -> Type s }
+  vector                               { \s -> Vector }
+  matrix                               { \s -> Matrix }
   true                                 { \s -> TrueToken }
   false                                { \s -> FalseToken }
   "{"                                  { \s -> BracketLeft }
@@ -40,6 +40,7 @@ tokens :-
   "("                                  { \s -> ParenLeft }
   ")"                                  { \s -> ParenRight }
   ==                                   { \s -> Equal }
+  "!="                                 { \s -> NotEqual}
   >                                    { \s -> Greater}
   >=                                   { \s -> GreaterEq}
   "<"                                  { \s -> Less}
@@ -96,6 +97,8 @@ data Token =
   FalseToken |
   RemAssign |
   PowAssign |
+  Vector  |
+  Matrix  |
   Add    |
   Sub    |
   Mul    |
@@ -121,6 +124,7 @@ data Token =
   While  |
   Repeat  |
   Until  |
+  NotEqual |
   Equal |
   Greater |
   GreaterEq |

@@ -261,6 +261,12 @@ equalToken = tokenPrim show update_pos get_token
     get_token Equal = Just Equal
     get_token _ = Nothing
 
+notEqualToken :: ParsecT [Token] st IO Token
+notEqualToken = tokenPrim show update_pos get_token
+  where
+    get_token NotEqual = Just NotEqual
+    get_token _ = Nothing
+
 greaterToken :: ParsecT [Token] st IO Token
 greaterToken = tokenPrim show update_pos get_token
   where
@@ -336,6 +342,18 @@ mainToken = tokenPrim show update_pos get_token
     get_token Main = Just Main
     get_token _ = Nothing
 
+vectorToken :: ParsecT [Token] st IO Token
+vectorToken = tokenPrim show update_pos get_token
+  where
+    get_token Vector = Just Vector
+    get_token _ = Nothing
+
+matrixToken :: ParsecT [Token] st IO Token
+matrixToken = tokenPrim show update_pos get_token
+  where
+    get_token Matrix = Just Matrix
+    get_token _ = Nothing
+
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -368,10 +386,53 @@ initial_declarations =
     b <- initial_declarations
     return (a ++ b)
   )
+  <|> try (do
+    a <- user_defined_types_inicializations
+    b <- initial_declarations
+    return (a ++ b)
+  )
+  <|> try (do
+    a <- data_structures_declarations
+    b <- initial_declarations
+    return (a ++ b)
+  )
   <|> return []
+
+data_structures_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
+data_structures_declarations = do
+  a <- idToken
+  b <- matrixToken <|> vectorToken
+  c <- lessToken
+  d <- data_structures_contents
+  e <- greaterToken
+  h <- semiColonToken
+  -- updateState (symtable_insert (a, get_default_value b))
+  return ([a] ++ [b] ++ [c] ++ d ++ [e] ++ [h])
+
+data_structures_contents :: ParsecT [Token] [(Token, Token)] IO [Token]
+data_structures_contents =
+  try (do
+    a <- matrixToken <|> vectorToken
+    b <- lessToken
+    c <- data_structures_contents
+    d <- greaterToken
+    return ([a] ++ [b] ++ c ++ [d])
+  )
+  <|> 
+  try (do
+    a <- try typeToken <|> try idToken
+    return [a]
+  )
 
 user_defined_types :: ParsecT [Token] [(Token, Token)] IO [Token]
 user_defined_types = enum <|> struct
+
+user_defined_types_inicializations :: ParsecT [Token] [(Token, Token)] IO [Token]
+user_defined_types_inicializations = do
+  a <- idToken
+  b <- idToken
+  c <- semiColonToken
+  return ([a] ++ [b] ++ [c])
 
 struct :: ParsecT [Token] [(Token, Token)] IO [Token]
 struct = do
@@ -398,14 +459,14 @@ user_defined_types_declarations = do
   return (first ++ next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_user_defined_types_declarations = 
+remaining_user_defined_types_declarations =
   (do
     first <- try variable_declarations <|> try const_declarations
     rest <- remaining_user_defined_types_declarations
     return (first ++ rest)
   )
   <|> return []
-  
+
 variable_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 variable_declarations =
   try variable_declaration
@@ -492,7 +553,7 @@ subprograms =
     rest <- subprograms
     return (f ++ rest)
   )
-  <|> 
+  <|>
   try (do
     p <- procedure
     rest <- subprograms
@@ -532,12 +593,12 @@ param = do
   return (a : [b])
 
 params :: ParsecT [Token] [(Token, Token)] IO [Token]
-params = 
+params =
   (do
     first <- param
     next <- remainingParams
     return (first ++ next)
-  ) 
+  )
   <|> return []
 
 remainingParams :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -557,22 +618,24 @@ stmts = do
   return (first ++ next)
 
 remaining_stmts :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_stmts = 
+remaining_stmts =
   (do
     a <- stmt
     b <- remaining_stmts
     return (a ++ b)
-  ) 
+  )
   <|> return []
 
 stmt :: ParsecT [Token] [(Token, Token)] IO [Token]
-stmt = 
-  try loop 
-  <|> try conditional 
-  <|> try procedure_call 
+stmt =
+  try loop
+  <|> try conditional
+  <|> try procedure_call
   <|> try assign
   <|> try variable_declarations
   <|> try const_declarations
+  <|> try user_defined_types_inicializations
+  <|> try data_structures_declarations
   <|> try function_return
   <|> try function_return
 
@@ -628,13 +691,7 @@ remaining_expressions =
   <|> return []
 
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-expression = chainl1 term addMinusOp 
-  -- <|> try comparison 
-  -- <|> 
-  -- try (do
-  --   a <- try all_literal_tokens
-  --   return [a]
-  -- )
+expression = chainl1 term addMinusOp
 
 comparison :: ParsecT [Token] [(Token, Token)] IO [Token]
 comparison = do
@@ -646,6 +703,7 @@ comparison = do
 comparison_op :: ParsecT [Token] [(Token, Token)] IO Token
 comparison_op =
   try equalToken
+  <|> try notEqualToken
   <|> try greaterToken
   <|> try greaterEqToken
   <|> try lessToken
@@ -664,11 +722,11 @@ term = chainl1 factor mulDivOp
 
 addMinusOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 addMinusOp =
-  (do 
+  (do
     op <- addToken
     return (\a b -> a ++ [op] ++ b)
   )
-  <|> 
+  <|>
   (do
     op <- divToken
     return (\a b -> a ++ [op] ++ b)
@@ -676,18 +734,18 @@ addMinusOp =
 
 mulDivOp :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 mulDivOp =
-  (do 
-    op <- mulToken 
+  (do
+    op <- mulToken
     return (\a b -> a ++ [op] ++ b)
   )
-  <|> 
-  (do 
-    op <- divToken 
+  <|>
+  (do
+    op <- divToken
     return (\a b -> a ++ [op] ++ b)
   )
 
 factor :: ParsecT [Token] [(Token, Token)] IO [Token]
-factor = 
+factor =
   try function_call
   <|> fmap (: []) idToken
   <|> fmap (: []) intToken
