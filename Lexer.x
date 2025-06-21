@@ -23,6 +23,8 @@ tokens :-
   "."                                  { \s -> Dot}
   struct                               { \s -> Struct }
   enum                                 { \s -> Enum }
+  print                                { \s -> Print }
+  scan                                 { \s -> Scan }
   const                                { \s -> Const }
   guess                                { \s -> Guess }
   int                                  { \s -> Type s }
@@ -31,8 +33,8 @@ tokens :-
   string                               { \s -> Type s }
   vector                               { \s -> Vector }
   matrix                               { \s -> Matrix }
-  true                                 { \s -> TrueToken }
-  false                                { \s -> FalseToken }
+  true                                 { \s -> Bool True }
+  false                                { \s -> Bool False }
   "{"                                  { \s -> BracketLeft }
   "}"                                  { \s -> BracketRight }
   "["                                  { \s -> BraceLeft }
@@ -93,12 +95,12 @@ data Token =
   SubAssign |
   MulAssign |
   DivAssign |
-  TrueToken |
-  FalseToken |
   RemAssign |
   PowAssign |
   Vector  |
   Matrix  |
+  Print   |
+  Scan    |
   Add    |
   Sub    |
   Mul    |
@@ -137,6 +139,7 @@ data Token =
   Id String |
   Float Float |
   Int Int |
+  Bool Bool |
   String String 
   deriving (Eq,Show)
 

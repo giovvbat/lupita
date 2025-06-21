@@ -243,18 +243,6 @@ untilToken = tokenPrim show update_pos get_token
     get_token Until = Just Until
     get_token _ = Nothing
 
-trueToken :: ParsecT [Token] st IO Token
-trueToken = tokenPrim show update_pos get_token
-  where
-    get_token TrueToken = Just TrueToken
-    get_token _ = Nothing
-
-falseToken :: ParsecT [Token] st IO Token
-falseToken = tokenPrim show update_pos get_token
-  where
-    get_token FalseToken = Just FalseToken
-    get_token _ = Nothing
-
 equalToken :: ParsecT [Token] st IO Token
 equalToken = tokenPrim show update_pos get_token
   where
@@ -330,6 +318,12 @@ stringToken = tokenPrim show update_pos get_token
     get_token (String x) = Just (String x)
     get_token _ = Nothing
 
+boolToken :: ParsecT [Token] st IO Token
+boolToken = tokenPrim show update_pos get_token
+  where
+    get_token (Bool x) = Just (Bool x)
+    get_token _ = Nothing
+
 guessToken :: ParsecT [Token] st IO Token
 guessToken = tokenPrim show update_pos get_token
   where
@@ -352,6 +346,18 @@ matrixToken :: ParsecT [Token] st IO Token
 matrixToken = tokenPrim show update_pos get_token
   where
     get_token Matrix = Just Matrix
+    get_token _ = Nothing
+
+printToken :: ParsecT [Token] st IO Token
+printToken = tokenPrim show update_pos get_token
+  where
+    get_token Print = Just Print
+    get_token _ = Nothing
+
+scanToken :: ParsecT [Token] st IO Token
+scanToken = tokenPrim show update_pos get_token
+  where
+    get_token Scan = Just Scan
     get_token _ = Nothing
 
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
@@ -659,13 +665,16 @@ assign = do
   return ([a] ++ [b] ++ c ++ [d])
 
 procedure_call :: ParsecT [Token] [(Token, Token)] IO [Token]
-procedure_call = do
-  a <- idToken
-  b <- parenLeftToken
-  c <- expressions <|> return []
-  d <- parenRightToken
-  e <- semiColonToken
-  return ([a, b] ++ c ++ [d] ++ [e])
+procedure_call = 
+  try (do
+    a <- idToken
+    b <- parenLeftToken
+    c <- expressions <|> return []
+    d <- parenRightToken
+    e <- semiColonToken
+    return ([a, b] ++ c ++ [d] ++ [e])
+  )
+  <|> try print_procedure
 
 function_return :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_return = do
@@ -710,12 +719,15 @@ comparison_op =
   <|> try lessEqToken
 
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
-function_call = do
-  a <- idToken
-  b <- parenLeftToken
-  c <- expressions <|> return []
-  d <- parenRightToken
-  return ([a, b] ++ c ++ [d])
+function_call = 
+  try (do
+    a <- idToken
+    b <- parenLeftToken
+    c <- expressions <|> return []
+    d <- parenRightToken
+    return ([a, b] ++ c ++ [d])
+  )
+  <|> try scan_function
 
 term :: ParsecT [Token] [(Token, Token)] IO [Token]
 term = chainl1 factor mulDivOp
@@ -866,8 +878,23 @@ all_literal_tokens =
   try intToken
   <|> try floatToken
   <|> try stringToken
-  <|> try trueToken
-  <|> try falseToken
+  <|> try boolToken
+
+print_procedure :: ParsecT [Token] [(Token, Token)] IO [Token]
+print_procedure = do
+  a <- printToken
+  b <- parenLeftToken
+  c <- expression <|> return []
+  d <- parenRightToken
+  e <- semiColonToken
+  return ([a, b] ++ c ++ [d] ++ [e])
+
+scan_function :: ParsecT [Token] [(Token, Token)] IO [Token]
+scan_function = do
+  a <- scanToken
+  b <- parenLeftToken
+  c <- parenRightToken
+  return ([a] ++ [b] ++ [c])
 
 -- funções para a tabela de símbolos
 
