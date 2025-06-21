@@ -149,11 +149,13 @@ notToken = tokenPrim show update_pos get_token
     get_token Not = Just Not
     get_token _ = Nothing
 
+bracketLeftToken :: ParsecT [Token] st IO Token
 bracketLeftToken = tokenPrim show update_pos get_token
   where
     get_token BracketLeft = Just BracketLeft
     get_token _ = Nothing
 
+bracketRightToken :: ParsecT [Token] st IO Token
 bracketRightToken = tokenPrim show update_pos get_token
   where
     get_token BracketRight = Just BracketRight
@@ -291,11 +293,13 @@ enumToken = tokenPrim show update_pos get_token
     get_token Enum = Just Enum
     get_token _ = Nothing
 
+typeToken :: ParsecT [Token] st IO Token
 typeToken = tokenPrim show update_pos get_token
   where
     get_token (Type x) = Just (Type x)
     get_token _ = Nothing
 
+idToken :: ParsecT [Token] st IO Token
 idToken = tokenPrim show update_pos get_token
   where
     get_token (Id x) = Just (Id x)
@@ -307,6 +311,7 @@ floatToken = tokenPrim show update_pos get_token
     get_token (Float x) = Just (Float x)
     get_token _ = Nothing
 
+intToken :: ParsecT [Token] st IO Token
 intToken = tokenPrim show update_pos get_token
   where
     get_token (Int x) = Just (Int x)
@@ -703,15 +708,8 @@ remaining_expressions =
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression =
   try arithmetic_expression
-  -- <|> try boolean_expression
+  <|> try boolean_expression
   <|> try string_tokens
-  <|>
-  try (do
-    a <- parenLeftToken
-    b <- expression
-    c <- parenRightToken
-    return ([a] ++ b ++ [c])
-  )
 
 -- expressões aritméticas
 arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -792,6 +790,15 @@ pow_op = do
 unary_arithmetic_ops :: ParsecT [Token] [(Token, Token)] IO Token
 unary_arithmetic_ops = subToken
 
+
+
+
+
+
+
+
+
+
 -- expressões booleanas gerais
 boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 boolean_expression = or_expression
@@ -852,6 +859,19 @@ comparison_ops =
 
 unary_boolean_ops :: ParsecT [Token] [(Token, Token)] IO Token
 unary_boolean_ops = try notToken
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 data_structures_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
 data_structures_attribute_access =
@@ -958,7 +978,7 @@ cond_if :: ParsecT [Token] [(Token, Token)] IO [Token]
 cond_if = do
   a <- ifToken
   b <- parenLeftToken
-  c <- expression
+  c <- boolean_expression
   d <- parenRightToken
   e <- bracketLeftToken
   f <- stmts
