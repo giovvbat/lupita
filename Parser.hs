@@ -5,12 +5,13 @@ module Main (main) where
 
 import Control.Arrow (Arrow (first))
 import Control.Monad (Monad (return))
+import Control.Monad.IO.Class
 import GHC.Float (divideDouble)
 import GHC.IO.Device (RawIO (read))
+import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
-import Text.Parsec.Token (GenTokenParser (decimal, semi, comma))
-import GHC.RTS.Flags (TraceFlags(user))
+import Text.Parsec.Token (GenTokenParser (comma, decimal, semi))
 
 -- parsers para os tokens
 
@@ -713,7 +714,10 @@ expression =
 
 -- expressões aritméticas
 arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-arithmetic_expression = add_sub_expression
+arithmetic_expression = do 
+    expr <- add_sub_expression
+    notFollowedBy boolean_op
+    return expr
 
 -- soma e subtração – associatividade à esquerda
 add_sub_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -790,15 +794,6 @@ pow_op = do
 unary_arithmetic_ops :: ParsecT [Token] [(Token, Token)] IO Token
 unary_arithmetic_ops = subToken
 
-
-
-
-
-
-
-
-
-
 -- expressões booleanas gerais
 boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 boolean_expression = or_expression
@@ -809,34 +804,24 @@ or_expression = chainl1 and_expression or_op
 
 -- AND (nível 1) – associatividade à esquerda
 and_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-and_expression = chainl1 boolean_base_expression and_op
+and_expression = chainl1 not_expression and_op
 
--- operações unárias e comparações
-boolean_base_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-boolean_base_expression =
-  try unary_boolean_expression
-  <|> try comparison_expression
-  <|> 
-  try (do
-    a <- parenLeftToken
-    b <- boolean_expression
-    c <- parenRightToken
-    return ([a] ++ b ++ [c])
-  )
+not_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+not_expression =
+  try (do op <- notToken; expr <- not_expression; return (op : expr))
+    <|> boolean_factor
 
--- NOT (nível 2) – prefixado
-unary_boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-unary_boolean_expression = do
-  op <- unary_boolean_ops
-  expr <- boolean_expression
-  return (op : expr)
-
-comparison_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-comparison_expression = do
-  a <- expression
-  op <- comparison_ops
-  b <- expression
-  return (a ++ [op] ++ b)
+boolean_factor :: ParsecT [Token] [(Token, Token)] IO [Token]
+boolean_factor =
+  fmap (: []) boolToken
+    <|> try function_call
+    <|> try data_structures_attribute_access
+    <|> fmap (: []) idToken
+    <|> do
+      a <- parenLeftToken
+      b <- boolean_expression
+      c <- parenRightToken
+      return ([a] ++ b ++ [c])
 
 or_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 or_op = do
@@ -847,6 +832,9 @@ and_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 and_op = do
   op <- andToken
   return (\a b -> a ++ [op] ++ b)
+
+boolean_op :: ParsecT [Token] [(Token, Token)] IO Token
+boolean_op = try orToken <|> try andToken
 
 comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
 comparison_ops =
@@ -859,19 +847,6 @@ comparison_ops =
 
 unary_boolean_ops :: ParsecT [Token] [(Token, Token)] IO Token
 unary_boolean_ops = try notToken
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 data_structures_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
 data_structures_attribute_access =
