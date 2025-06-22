@@ -71,6 +71,10 @@ procedure main() {
 
     teste t;
 
+    if(oi and oi(true)) {
+        x int;
+    }
+
     iiiiiii bool = 10000;
 }
 

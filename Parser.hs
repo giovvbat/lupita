@@ -808,20 +808,25 @@ and_expression = chainl1 not_expression and_op
 
 not_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 not_expression =
-  try (do op <- notToken; expr <- not_expression; return (op : expr))
-    <|> boolean_factor
+  try (do 
+    op <- notToken; 
+    expr <- not_expression; 
+    return (op : expr)
+  )
+  <|> boolean_factor
 
 boolean_factor :: ParsecT [Token] [(Token, Token)] IO [Token]
 boolean_factor =
   fmap (: []) boolToken
-    <|> try function_call
-    <|> try data_structures_attribute_access
-    <|> fmap (: []) idToken
-    <|> do
-      a <- parenLeftToken
-      b <- boolean_expression
-      c <- parenRightToken
-      return ([a] ++ b ++ [c])
+  <|> try function_call
+  <|> try data_structures_attribute_access
+  <|> fmap (: []) idToken
+  <|> (do
+    a <- parenLeftToken
+    b <- boolean_expression
+    c <- parenRightToken
+    return ([a] ++ b ++ [c])
+  )
 
 or_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 or_op = do
