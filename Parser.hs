@@ -665,13 +665,24 @@ all_assign_tokens =
   <|> try assignToken
 
 assign :: ParsecT [Token] [(Token, Token)] IO [Token]
-assign = do
-  a <- idToken
-  b <- all_assign_tokens
-  c <- expression
-  d <- semiColonToken
-  -- updateState (symtable_update (a, c))
-  return ([a] ++ [b] ++ c ++ [d])
+assign = 
+  try (do
+    a <- access_chain
+    b <- all_assign_tokens
+    c <- expression
+    d <- semiColonToken
+    -- updateState (symtable_update (a, c))
+    return (a ++ [b] ++ c ++ [d])
+  )
+  <|> 
+  try (do
+    a <- idToken
+    b <- all_assign_tokens
+    c <- expression
+    d <- semiColonToken
+    -- updateState (symtable_update (a, c))
+    return ([a] ++ [b] ++ c ++ [d])
+  )
 
 procedure_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 procedure_call =
@@ -1040,8 +1051,6 @@ scan_function = do
   b <- parenLeftToken
   c <- parenRightToken
   return ([a] ++ [b] ++ [c])
-
--- inicialização de vetores e matrizes (vector<>, matrix<>) (tamanho dinâmico? como inicializar?)
 
 -- funções para a tabela de símbolos
 
