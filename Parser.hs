@@ -15,16 +15,19 @@ import Text.Parsec.Token (GenTokenParser (comma, decimal, semi))
 
 -- parsers para os tokens
 
+procedureToken :: ParsecT [Token] st IO Token
 procedureToken = tokenPrim show update_pos get_token
   where
     get_token Procedure = Just Procedure
     get_token _ = Nothing
 
+functionToken :: ParsecT [Token] st IO Token
 functionToken = tokenPrim show update_pos get_token
   where
     get_token Function = Just Function
     get_token _ = Nothing
 
+commaToken :: ParsecT [Token] st IO Token
 commaToken = tokenPrim show update_pos get_token
   where
     get_token Comma = Just Comma
@@ -708,16 +711,13 @@ remaining_expressions =
 -- expressão geral
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression =
-  try arithmetic_expression
+  try string_tokens
   <|> try boolean_expression
-  <|> try string_tokens
+  <|> try arithmetic_expression
 
 -- expressões aritméticas
 arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-arithmetic_expression = do 
-    expr <- add_sub_expression
-    notFollowedBy boolean_op
-    return expr
+arithmetic_expression = add_sub_expression
 
 -- soma e subtração – associatividade à esquerda
 add_sub_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -745,43 +745,44 @@ unary_expression =
 factor :: ParsecT [Token] [(Token, Token)] IO [Token]
 factor =
   try function_call
-  <|> try data_structures_attribute_access
+  <|> try access_chain
   <|> fmap (:[]) idToken
-  <|> fmap (:[]) numeric_literal_tokens
-  <|> 
-  do
+  <|> try numeric_literal_tokens
+  <|>
+  try (do
     a <- parenLeftToken
     b <- arithmetic_expression
     c <- parenRightToken
     return ([a] ++ b ++ [c])
+  )
 
 -- operadores binários
 add_sub_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 add_sub_op =
-  (do 
-    op <- addToken; 
+  (do
+    op <- addToken;
     return (\a b -> a ++ [op] ++ b)
   )
   <|>
-  (do 
-    op <- subToken; 
+  (do
+    op <- subToken;
     return (\a b -> a ++ [op] ++ b)
   )
 
 mul_div_rem_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 mul_div_rem_op =
-  (do 
-    op <- mulToken; 
+  (do
+    op <- mulToken;
     return (\a b -> a ++ [op] ++ b)
   )
   <|>
-  (do 
-    op <- divToken; 
+  (do
+    op <- divToken;
     return (\a b -> a ++ [op] ++ b)
   )
   <|>
-  (do 
-    op <- remToken; 
+  (do
+    op <- remToken;
     return (\a b -> a ++ [op] ++ b)
   )
 
@@ -804,24 +805,26 @@ or_expression = chainl1 and_expression or_op
 
 -- AND (nível 1) – associatividade à esquerda
 and_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-and_expression = chainl1 not_expression and_op
+and_expression = chainl1 comparison_expression and_op
+
+comparison_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+comparison_expression = chainl1 not_expression comparison_op
 
 not_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 not_expression =
-  try (do 
-    op <- notToken; 
-    expr <- not_expression; 
+  try (do
+    op <- notToken;
+    expr <- not_expression;
     return (op : expr)
   )
-  <|> boolean_factor
+  <|> try boolean_factor
 
 boolean_factor :: ParsecT [Token] [(Token, Token)] IO [Token]
 boolean_factor =
   fmap (: []) boolToken
-  <|> try function_call
-  <|> try data_structures_attribute_access
-  <|> fmap (: []) idToken
-  <|> (do
+  <|> try string_tokens
+  <|> try arithmetic_expression
+  <|> try (do
     a <- parenLeftToken
     b <- boolean_expression
     c <- parenRightToken
@@ -838,11 +841,13 @@ and_op = do
   op <- andToken
   return (\a b -> a ++ [op] ++ b)
 
-boolean_op :: ParsecT [Token] [(Token, Token)] IO Token
-boolean_op = try orToken <|> try andToken
+comparison_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+comparison_op = do
+  op <- all_comparison_ops
+  return (\a b -> a ++ [op] ++ b)
 
-comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
-comparison_ops =
+all_comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
+all_comparison_ops =
   try equalToken
   <|> try notEqualToken
   <|> try greaterToken
@@ -850,41 +855,39 @@ comparison_ops =
   <|> try lessToken
   <|> try lessEqToken
 
-unary_boolean_ops :: ParsecT [Token] [(Token, Token)] IO Token
-unary_boolean_ops = try notToken
+access_chain :: ParsecT [Token] [(Token, Token)] IO [Token]
+access_chain = do
+  a <- idToken
+  b <- remaining_access_chain
+  return (a : b)
 
-data_structures_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
-data_structures_attribute_access =
-  try user_defined_types_attribute_access
-  <|> try vector_content_access
-  <|> try matrix_content_access
-
-user_defined_types_attribute_access :: ParsecT [Token] [(Token, Token)] IO [Token]
-user_defined_types_attribute_access =
+remaining_access_chain :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_access_chain =
   try (do
-    a <- idToken
-    b <- dotToken
-    c <- idToken
-    return ([a, b] ++ [c])
+    a <- dotToken
+    b <- idToken
+    rest <- remaining_access_chain
+    return ([a] ++ [b] ++ rest)
   )
-
-vector_content_access :: ParsecT [Token] [(Token, Token)] IO [Token]
-vector_content_access = do
-  a <- idToken
-  b <- braceLeftToken
-  c <- expression
-  d <- braceRightToken
-  return ([a, b] ++ c ++ [d])
-
-matrix_content_access :: ParsecT [Token] [(Token, Token)] IO [Token]
-matrix_content_access = do
-  a <- idToken
-  b <- braceLeftToken
-  c <- expression
-  d <- commaToken
-  e <- expression
-  f <- braceRightToken
-  return ([a, b] ++ c ++ [d] ++ e ++ [f])
+  <|>
+  try (do
+    a <- braceLeftToken
+    b <- arithmetic_expression
+    c <- braceRightToken
+    rest <- remaining_access_chain
+    return ([a] ++ b ++ [c] ++ rest)
+  )
+  <|>
+  try (do
+    a <- braceLeftToken
+    b <- arithmetic_expression
+    c <- commaToken
+    d <- arithmetic_expression
+    e <- braceRightToken
+    rest <- remaining_access_chain
+    return ([a] ++ b ++ [c] ++ d ++ [e] ++ rest)
+  )
+  <|> return []
 
 function_call :: ParsecT [Token] [(Token, Token)] IO [Token]
 function_call =
@@ -1007,10 +1010,10 @@ default_case = do
   c <- stmts
   return (a : b : c)
 
-numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO Token
-numeric_literal_tokens =
-  try intToken
-  <|> try floatToken
+numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
+numeric_literal_tokens = do
+  a <- try intToken <|> try floatToken
+  return [a]
 
 string_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
 string_tokens = do

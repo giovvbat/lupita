@@ -71,7 +71,7 @@ procedure main() {
 
     teste t;
 
-    if(oi and oi(true)) {
+    if(i()) {
         x int;
     }
 
