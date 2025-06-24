@@ -18,7 +18,9 @@ struct Teste {
 b string = oi();
 
 function teste(x int) int {
-    x int;
+    while (1 < x and false) {
+        x int;
+    }
 }
 
 struct Teste {
@@ -45,7 +47,7 @@ function teste() int {
 
     kchnka guess = 10;
 
-    for(i int; i=0; iiiiiii+=1) {
+    for(ismnc[i][j][k] = 0; idljnk[i, j] > (2 + 5); ismdnck += 1) {
         i=1;
     }
 
@@ -59,7 +61,7 @@ function teste() int {
 
     repeat {
         x = 11;
-    } until (teste(oi));
+    } until (teste(oi) and i < 4);
 
     a int;
 }

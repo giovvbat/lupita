@@ -11,7 +11,6 @@ import GHC.IO.Device (RawIO (read))
 import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
-import Text.Parsec.Token (GenTokenParser (comma, decimal, semi))
 
 -- parsers para os tokens
 
@@ -910,7 +909,7 @@ while :: ParsecT [Token] [(Token, Token)] IO [Token]
 while = do
   a <- whileToken
   b <- parenLeftToken
-  c <- expression
+  c <- boolean_expression
   d <- parenRightToken
   e <- bracketLeftToken
   f <- stmts
@@ -925,7 +924,7 @@ repeat_until = do
   d <- bracketRightToken
   e <- untilToken
   f <- parenLeftToken
-  g <- expression
+  g <- boolean_expression
   h <- parenRightToken
   j <- semiColonToken
   return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
@@ -934,8 +933,8 @@ for :: ParsecT [Token] [(Token, Token)] IO [Token]
 for = do
   a <- forToken
   b <- parenLeftToken
-  c <- variable_declaration
-  d <- for_assign
+  c <- for_variable_initialization
+  d <- for_condition
   e <- semiColonToken
   f <- for_assign
   g <- parenRightToken
@@ -944,12 +943,46 @@ for = do
   j <- bracketRightToken
   return ([a] ++ [b] ++ c ++ d ++ [e] ++ f ++ [g] ++ [h]++ i ++ [j])
 
+for_variable_initialization :: ParsecT [Token] [(Token, Token)] IO [Token]
+for_variable_initialization =
+  try (do
+    a <- for_assign
+    b <- semiColonToken
+    return (a ++ [b])
+  )
+  <|> try variable_declaration_assignment
+
+for_condition :: ParsecT [Token] [(Token, Token)] IO [Token]
+for_condition = 
+  try (do
+    a <- access_chain
+    b <- all_comparison_ops
+    c <- arithmetic_expression
+    return (a ++ [b] ++ c)
+  )
+  <|>
+  try (do
+    a <- idToken
+    b <- all_comparison_ops
+    c <- arithmetic_expression
+    return ([a] ++ [b] ++ c)
+  ) 
+
 for_assign :: ParsecT [Token] [(Token, Token)] IO [Token]
-for_assign = do
-  a <- idToken
-  b <- all_assign_tokens
-  c <- expression
-  return ([a] ++ [b] ++ c)
+for_assign = 
+  try (do
+    a <- access_chain
+    b <- all_assign_tokens
+    c <- arithmetic_expression
+    return (a ++ [b] ++ c)
+  )
+  <|>
+  try (do
+    a <- idToken
+    b <- all_assign_tokens
+    c <- arithmetic_expression
+    return ([a] ++ [b] ++ c)
+  )
 
 conditional :: ParsecT [Token] [(Token, Token)] IO [Token]
 conditional = if_else <|> match_case
