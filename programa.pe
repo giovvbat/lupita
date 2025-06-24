@@ -1,97 +1,31 @@
-b const guess = 10;
-
-b string = 10 + 8;
-
-enum oi {
-    a guess = in(7);
-    x float = 7;
-}
-
-teste vector<int>;
-
-teste2 matrix<vector<string>>;
-
-struct Teste {
-    a int = oi();
-}
-
-b string = oi();
-
-function teste(x int) int {
-    while (1 < x and false) {
-        x int;
-    }
-}
-
-struct Teste {
-    x int;
-}
-
-//true
-
-Teste t;
-
-// comentario
-
-function teste() int {
-    galileu guess = oi();
-    
-    match (oi()) {
-        case 9: x[i].pessoa = 11;
-        default: xxxxxx *= 10;
-    }
-
-    b = scan();
-
-    print((oi(8 + 2 / 3 + (matrizz[i, i])) + struuuct.i + veeeetor[i]));
-
-    kchnka guess = 10;
-
-    for(ismnc[i][j][k] = 0; idljnk[i, j] > (2 + 5); ismdnck += 1) {
-        i=1;
-    }
-
-    oi string;
-
-    teste T;
-
-    teste vector<int>;
-
-    teste2 matrix<vector<bool>>;
-
-    repeat {
-        x = 11;
-    } until (teste(oi) and i < 4);
-
-    a int;
-}
-
-function teste() int {
-    oi();
-}
-
-procedure majin() {
+function mambjhbhjin(x jdkncjks, a int) matrix<vector<matrix<string>>> {
     teste();
     x = 10;
 
-    teste t;
+    //teste t;
 
-    if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
+    x matrix<teste>;
+
+    Teste t;
+
+    if(i() and oi[i].pessoa or 2 and 5 < 2 or teste < 5) {
         x int;
     }
 
     iiiiiii bool = 10000;
 }
 
-struct teste {
-    x int;
-}
+Teste t;
 
-procedure main() {
+procedure main(djknfjks sjdknfkjdsn) {
     teste();
     x = 10;
 
-    teste t;
+    //teste t;
+
+    x matrix<teste>;
+
+    Teste t;
 
     if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
         x int;

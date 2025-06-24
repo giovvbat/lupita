@@ -400,11 +400,6 @@ initial_declarations =
     return (a ++ b)
   )
   <|> try (do
-    a <- user_defined_types_inicializations
-    b <- initial_declarations
-    return (a ++ b)
-  )
-  <|> try (do
     a <- data_structures_declarations
     b <- initial_declarations
     return (a ++ b)
@@ -421,36 +416,14 @@ data_structures_declarations = do
   a <- idToken
   b <- matrixToken <|> vectorToken
   c <- lessToken
-  d <- data_structures_contents
+  d <- all_possible_type_tokens
   e <- greaterToken
   h <- semiColonToken
   -- updateState (symtable_insert (a, get_default_value b))
   return ([a] ++ [b] ++ [c] ++ d ++ [e] ++ [h])
 
-data_structures_contents :: ParsecT [Token] [(Token, Token)] IO [Token]
-data_structures_contents =
-  try (do
-    a <- matrixToken <|> vectorToken
-    b <- lessToken
-    c <- data_structures_contents
-    d <- greaterToken
-    return ([a] ++ [b] ++ c ++ [d])
-  )
-  <|>
-  try (do
-    a <- try typeToken <|> try idToken
-    return [a]
-  )
-
 user_defined_types :: ParsecT [Token] [(Token, Token)] IO [Token]
 user_defined_types = enum <|> struct
-
-user_defined_types_inicializations :: ParsecT [Token] [(Token, Token)] IO [Token]
-user_defined_types_inicializations = do
-  a <- idToken
-  b <- idToken
-  c <- semiColonToken
-  return ([a] ++ [b] ++ [c])
 
 struct :: ParsecT [Token] [(Token, Token)] IO [Token]
 struct = do
@@ -494,10 +467,10 @@ variable_declarations =
 variable_declaration :: ParsecT [Token] [(Token, Token)] IO [Token]
 variable_declaration = do
   a <- idToken
-  b <- typeToken
+  b <- all_possible_type_tokens
   c <- semiColonToken
-  updateState (symtable_insert (a, get_default_value b))
-  return ([a] ++ [b] ++ [c])
+  -- updateState (symtable_insert (a, get_default_value b))
+  return ([a] ++ b ++ [c])
 
 variable_declaration_assignment :: ParsecT [Token] [(Token, Token)] IO [Token]
 variable_declaration_assignment = do
@@ -586,17 +559,17 @@ function = do
   c <- parenLeftToken
   d <- params
   e <- parenRightToken
-  f <- typeToken
+  f <- all_possible_type_tokens
   g <- bracketLeftToken
   h <- stmts
   i <- bracketRightToken
-  return (a : b : [c] ++ d ++ [e] ++ [f] ++ [g] ++ h ++ [i])
+  return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
 
 param :: ParsecT [Token] [(Token, Token)] IO [Token]
 param = do
   a <- idToken
-  b <- typeToken
-  return (a : [b])
+  b <- all_possible_type_tokens
+  return (a : b)
 
 params :: ParsecT [Token] [(Token, Token)] IO [Token]
 params =
@@ -640,7 +613,6 @@ stmt =
   <|> try assign
   <|> try variable_declarations
   <|> try const_declarations
-  <|> try user_defined_types_inicializations
   <|> try data_structures_declarations
   <|> try function_return
   <|> try function_return
@@ -1050,6 +1022,21 @@ numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
 numeric_literal_tokens = do
   a <- try intToken <|> try floatToken
   return [a]
+
+all_possible_type_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
+all_possible_type_tokens = 
+  try (do
+    a <- try idToken <|> try typeToken
+    return [a]
+  ) 
+  <|> 
+  try (do
+    a <- matrixToken <|> vectorToken
+    b <- lessToken
+    c <- all_possible_type_tokens
+    d <- greaterToken
+    return ([a] ++ [b] ++ c ++ [d])
+  )
 
 string_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
 string_tokens = do
