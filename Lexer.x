@@ -64,6 +64,9 @@ tokens :-
   "^"                                  { \s -> Pow}
   =                                    { \s -> Assign}
   return                               { \s -> Return}
+  break                                { \s -> Break}
+  continue                             { \s -> Continue}
+  leave                                { \s -> Leave}
   if                                   { \s -> If}
   else                                 { \s -> Else}
   while                                { \s -> While}
@@ -117,6 +120,9 @@ data Token =
   ParenLeft    |
   ParenRight    |
   Return  |
+  Break   |
+  Continue |
+  Leave   |
   If  |
   Else  |
   Match  |

@@ -23,12 +23,26 @@ procedure main(djknfjks sjdknfkjdsn) {
 
     //teste t;
 
+    leave;
+
     x matrix<teste>;
 
+    continue;
+    
     Teste t;
 
     if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
         x int;
+    }
+
+
+    while (i == true) {
+        x int;
+
+        if(true) {
+            break;
+        }
+        
     }
 
     iiiiiii bool = 10000;

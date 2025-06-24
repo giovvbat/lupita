@@ -368,6 +368,24 @@ scanToken = tokenPrim show update_pos get_token
     get_token Scan = Just Scan
     get_token _ = Nothing
 
+continueToken :: ParsecT [Token] st IO Token
+continueToken = tokenPrim show update_pos get_token
+  where
+    get_token Continue = Just Continue
+    get_token _ = Nothing
+
+leaveToken :: ParsecT [Token] st IO Token
+leaveToken = tokenPrim show update_pos get_token
+  where
+    get_token Leave = Just Leave
+    get_token _ = Nothing
+
+breakToken :: ParsecT [Token] st IO Token
+breakToken = tokenPrim show update_pos get_token
+  where
+    get_token Break = Just Break
+    get_token _ = Nothing
+
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -608,6 +626,7 @@ remaining_stmts =
 stmt :: ParsecT [Token] [(Token, Token)] IO [Token]
 stmt =
   try loop
+  <|> try all_escapes_stmts
   <|> try conditional
   <|> try procedure_call
   <|> try assign
@@ -628,7 +647,7 @@ all_assign_tokens =
   <|> try assignToken
 
 assign :: ParsecT [Token] [(Token, Token)] IO [Token]
-assign = 
+assign =
   try (do
     a <- access_chain
     b <- all_assign_tokens
@@ -637,7 +656,7 @@ assign =
     -- updateState (symtable_update (a, c))
     return (a ++ [b] ++ c ++ [d])
   )
-  <|> 
+  <|>
   try (do
     a <- idToken
     b <- all_assign_tokens
@@ -925,7 +944,7 @@ for_variable_initialization =
   <|> try variable_declaration_assignment
 
 for_condition :: ParsecT [Token] [(Token, Token)] IO [Token]
-for_condition = 
+for_condition =
   try (do
     a <- access_chain
     b <- all_comparison_ops
@@ -938,10 +957,10 @@ for_condition =
     b <- all_comparison_ops
     c <- arithmetic_expression
     return ([a] ++ [b] ++ c)
-  ) 
+  )
 
 for_assign :: ParsecT [Token] [(Token, Token)] IO [Token]
-for_assign = 
+for_assign =
   try (do
     a <- access_chain
     b <- all_assign_tokens
@@ -1024,12 +1043,12 @@ numeric_literal_tokens = do
   return [a]
 
 all_possible_type_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
-all_possible_type_tokens = 
+all_possible_type_tokens =
   try (do
     a <- try idToken <|> try typeToken
     return [a]
-  ) 
-  <|> 
+  )
+  <|>
   try (do
     a <- matrixToken <|> vectorToken
     b <- lessToken
@@ -1063,6 +1082,12 @@ scan_function = do
   b <- parenLeftToken
   c <- parenRightToken
   return ([a] ++ [b] ++ [c])
+
+all_escapes_stmts :: ParsecT [Token] [(Token, Token)] IO [Token]
+all_escapes_stmts = do
+  a <- continueToken <|> leaveToken <|> breakToken
+  b <- semiColonToken
+  return (a : [b])
 
 -- funções para a tabela de símbolos
 
