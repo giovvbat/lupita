@@ -378,10 +378,9 @@ update_pos pos _ [] = pos -- fim do código-fonte
 program :: ParsecT [Token] [(Token, Token)] IO [Token]
 program = do
   a <- initial_declarations
-  b <- subprograms
-  c <- m
+  b <- m
   eof
-  return (a ++ b ++ c)
+  return (a ++ b)
 
 initial_declarations :: ParsecT [Token] [(Token, Token)] IO [Token]
 initial_declarations =
@@ -408,6 +407,11 @@ initial_declarations =
   )
   <|> try (do
     a <- data_structures_declarations
+    b <- initial_declarations
+    return (a ++ b)
+  )
+  <|> try (do
+    a <- subprograms
     b <- initial_declarations
     return (a ++ b)
   )
@@ -562,19 +566,7 @@ m = do
   return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
 
 subprograms :: ParsecT [Token] [(Token, Token)] IO [Token]
-subprograms =
-  try (do
-    f <- function
-    rest <- subprograms
-    return (f ++ rest)
-  )
-  <|>
-  try (do
-    p <- procedure
-    rest <- subprograms
-    return (p ++ rest)
-  )
-  <|> return []
+subprograms = try function <|> try procedure
 
 procedure :: ParsecT [Token] [(Token, Token)] IO [Token]
 procedure = do

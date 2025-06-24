@@ -17,12 +17,15 @@ struct Teste {
 
 b string = oi();
 
-//true
-
-enum testteee {
-    a int;
-    x float;
+function teste(x int) int {
+    x int;
 }
+
+struct Teste {
+    x int;
+}
+
+//true
 
 Teste t;
 
@@ -65,13 +68,30 @@ function teste() int {
     oi();
 }
 
+procedure majin() {
+    teste();
+    x = 10;
+
+    teste t;
+
+    if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
+        x int;
+    }
+
+    iiiiiii bool = 10000;
+}
+
+struct teste {
+    x int;
+}
+
 procedure main() {
     teste();
     x = 10;
 
     teste t;
 
-    if(i() and oi[i].pessoa) {
+    if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
         x int;
     }
 
