@@ -63,6 +63,7 @@ tokens :-
   "%"                                  { \s -> Rem}
   "^"                                  { \s -> Pow}
   =                                    { \s -> Assign}
+  null                                 { \s -> Null }
   return                               { \s -> Return}
   break                                { \s -> Break}
   continue                             { \s -> Continue}
@@ -129,6 +130,7 @@ data Token =
   Case  |
   Default  |
   For  |
+  Null |
   While  |
   Repeat  |
   Until  |

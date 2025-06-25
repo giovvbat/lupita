@@ -4,13 +4,15 @@
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
-import Control.Monad (Monad (return))
+import Control.Monad (Monad (return), Functor (fmap))
 import Control.Monad.IO.Class
 import GHC.Float (divideDouble)
 import GHC.IO.Device (RawIO (read))
 import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
+import Text.Parsec (ParsecT)
+import Text.Parsec.Token (TokenParser)
 
 -- parsers para os tokens
 
@@ -386,6 +388,12 @@ breakToken = tokenPrim show update_pos get_token
     get_token Break = Just Break
     get_token _ = Nothing
 
+nullToken :: ParsecT [Token] st IO Token
+nullToken = tokenPrim show update_pos get_token
+  where
+    get_token Null = Just Null
+    get_token _ = Nothing
+
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -704,8 +712,7 @@ remaining_expressions =
 -- expressão geral
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 expression =
-  try string_tokens
-  <|> try boolean_expression
+  try boolean_expression
   <|> try arithmetic_expression
 
 -- expressões aritméticas
@@ -737,7 +744,9 @@ unary_expression =
 -- fatores: unidades atômicas da expressão
 factor :: ParsecT [Token] [(Token, Token)] IO [Token]
 factor =
-  try function_call
+  fmap (:[]) nullToken
+  <|> try string_tokens
+  <|> try function_call
   <|> try access_chain
   <|> fmap (:[]) idToken
   <|> try numeric_literal_tokens
@@ -980,9 +989,9 @@ conditional = if_else <|> match_case
 
 if_else :: ParsecT [Token] [(Token, Token)] IO [Token]
 if_else = do
-    first <- cond_if
-    next <- cond_else
-    return (first ++ next)
+  first <- cond_if
+  next <- cond_else
+  return (first ++ next)
 
 cond_if :: ParsecT [Token] [(Token, Token)] IO [Token]
 cond_if = do
@@ -1020,22 +1029,68 @@ match_case = do
   return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ g ++ [h])
 
 cases :: ParsecT [Token] [(Token, Token)] IO [Token]
-cases =
+cases = 
+  try (do
+    a <- no_stmt_cases
+    b <- remaining_cases
+    return (a ++ b)
+  )
+  <|>
+  try (do
+    a <- stmt_case
+    b <- remaining_cases
+    return (a ++ b)
+  )
+  
+remaining_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_cases =
   (do
+    a <- cases
+    b <- remaining_cases
+    return (a ++ b)
+  )
+  <|> return []
+
+stmt_case :: ParsecT [Token] [(Token, Token)] IO [Token]
+stmt_case = do
   a <- caseToken
   b <- expression
   c <- colonToken
   d <- stmts
   return ([a] ++ b ++ [c] ++ d)
-  )
-  <|> return []
 
+no_stmt_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
+no_stmt_cases = do
+  a <- no_stmt_case
+  b <- remaining_no_stmt_cases
+  return (a ++ b)
+
+no_stmt_case :: ParsecT [Token] [(Token, Token)] IO [Token]
+no_stmt_case = do
+  a <- caseToken
+  b <- expression
+  c <- colonToken
+  return ([a] ++ b ++ [c])
+
+remaining_no_stmt_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_no_stmt_cases =
+  try (do
+    a <- no_stmt_case
+    b <- remaining_no_stmt_cases
+    return (a ++ b)
+  )
+  <|> try stmt_case
+  
 default_case :: ParsecT [Token] [(Token, Token)] IO [Token]
-default_case = do
-  a <- defaultToken
-  b <- colonToken
-  c <- stmts
-  return (a : b : c)
+default_case =
+  try (do
+    a <- defaultToken
+    b <- colonToken
+    c <- stmts
+    return ([a] ++ [b] ++ c)
+  )
+  <|>
+  return []
 
 numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
 numeric_literal_tokens = do

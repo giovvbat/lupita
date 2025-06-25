@@ -19,7 +19,7 @@ Teste t;
 
 procedure main(djknfjks sjdknfkjdsn) {
     teste();
-    x = 10;
+    x = a + (- b) + c;
 
     //teste t;
 
@@ -31,15 +31,28 @@ procedure main(djknfjks sjdknfkjdsn) {
     
     Teste t;
 
-    if(i() and oi[i].pessoa or 2 and 5 < 2 or teste) {
-        x int;
+    if(a > 2 or c) {
+        x int = (null) + 8;
     }
 
 
-    while (i == true) {
+    match (teste) {
+        case 2:
+        case 3: x int;
+        case 0:
+        case 1: x int;
+        case 5: x int;
+        case -1:
+        case 0:
+        case 1: x int;
+        case 5: x int;
+        default: x int;
+    }
+
+    while (i == true or null) {
         x int;
 
-        if(true) {
+        if(oi) {
             break;
         }
         
