@@ -37,15 +37,7 @@ procedure main(djknfjks sjdknfkjdsn) {
 
 
     match (teste) {
-        case 2:
-        case 3: x int;
-        case 0:
-        case 1: x int;
-        case 5: x int;
-        case -1:
-        case 0:
-        case 1: x int;
-        case 5: x int;
+        case (8, 7, oi(), a + b): x int;
         default: x int;
     }
 

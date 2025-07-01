@@ -1024,73 +1024,66 @@ match_case = do
   d <- parenRightToken
   e <- bracketLeftToken
   f <- cases
-  g <- default_case
   h <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ g ++ [h])
+  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [h])
 
 cases :: ParsecT [Token] [(Token, Token)] IO [Token]
-cases = 
-  try (do
-    a <- no_stmt_cases
-    b <- remaining_cases
-    return (a ++ b)
-  )
+cases =
+  try default_case
   <|>
   try (do
-    a <- stmt_case
+    a <- single_case
     b <- remaining_cases
     return (a ++ b)
   )
-  
+
 remaining_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
 remaining_cases =
-  (do
-    a <- cases
+  try default_case
+  <|>
+  try (do
+    a <- single_case
     b <- remaining_cases
     return (a ++ b)
   )
   <|> return []
 
-stmt_case :: ParsecT [Token] [(Token, Token)] IO [Token]
-stmt_case = do
+single_case :: ParsecT [Token] [(Token, Token)] IO [Token]
+single_case = do
   a <- caseToken
-  b <- expression
+  b <- case_expression
   c <- colonToken
   d <- stmts
   return ([a] ++ b ++ [c] ++ d)
 
-no_stmt_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
-no_stmt_cases = do
-  a <- no_stmt_case
-  b <- remaining_no_stmt_cases
-  return (a ++ b)
-
-no_stmt_case :: ParsecT [Token] [(Token, Token)] IO [Token]
-no_stmt_case = do
-  a <- caseToken
-  b <- expression
-  c <- colonToken
-  return ([a] ++ b ++ [c])
-
-remaining_no_stmt_cases :: ParsecT [Token] [(Token, Token)] IO [Token]
-remaining_no_stmt_cases =
+case_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+case_expression =
+  try expression
+  <|>
   try (do
-    a <- no_stmt_case
-    b <- remaining_no_stmt_cases
-    return (a ++ b)
+    a <- parenLeftToken
+    b <- expression
+    c <- remaining_case_expression
+    d <- parenRightToken
+    return ([a] ++ b ++ c ++ [d])
   )
-  <|> try stmt_case
+
+remaining_case_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+remaining_case_expression = 
+  try (do
+    a <- commaToken
+    b <- expression
+    c <- remaining_case_expression
+    return ([a] ++ b ++ c)
+  )
+  <|> return []
   
 default_case :: ParsecT [Token] [(Token, Token)] IO [Token]
-default_case =
-  try (do
+default_case = do
     a <- defaultToken
     b <- colonToken
     c <- stmts
     return ([a] ++ [b] ++ c)
-  )
-  <|>
-  return []
 
 numeric_literal_tokens :: ParsecT [Token] [(Token, Token)] IO [Token]
 numeric_literal_tokens = do
