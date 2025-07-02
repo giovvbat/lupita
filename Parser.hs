@@ -299,37 +299,37 @@ enumToken = tokenPrim show update_pos get_token
 typeToken :: ParsecT [Token] st IO Token
 typeToken = tokenPrim show update_pos get_token
   where
-    get_token (Type p x) = Just (Type p x)
+    get_token (Type x p) = Just (Type x p)
     get_token _ = Nothing
 
 idToken :: ParsecT [Token] st IO Token
 idToken = tokenPrim show update_pos get_token
   where
-    get_token (Id p x) = Just (Id p x)
+    get_token (Id x p) = Just (Id x p)
     get_token _ = Nothing
 
 floatToken :: ParsecT [Token] st IO Token
 floatToken = tokenPrim show update_pos get_token
   where
-    get_token (Float p x) = Just (Float p x)
+    get_token (Float x p) = Just (Float x p)
     get_token _ = Nothing
 
 intToken :: ParsecT [Token] st IO Token
 intToken = tokenPrim show update_pos get_token
   where
-    get_token (Int p x) = Just (Int p x)
+    get_token (Int x p) = Just (Int x p)
     get_token _ = Nothing
 
 stringToken :: ParsecT [Token] st IO Token
 stringToken = tokenPrim show update_pos get_token
   where
-    get_token (String p x) = Just (String p x)
+    get_token (String x p) = Just (String x p)
     get_token _ = Nothing
 
 boolToken :: ParsecT [Token] st IO Token
 boolToken = tokenPrim show update_pos get_token
   where
-    get_token (Bool p x) = Just (Bool p x)
+    get_token (Bool x p) = Just (Bool x p)
     get_token _ = Nothing
 
 guessToken :: ParsecT [Token] st IO Token
@@ -1127,7 +1127,7 @@ all_escapes_stmts = do
 -- funções para a tabela de símbolos
 
 get_default_value :: Token -> Token
-get_default_value (Type p "int") = Int p 0
+get_default_value (Type "int" p) = Int 0 p
 
 symtable_insert :: (Token, Token) -> [(Token, Token)] -> [(Token, Token)]
 symtable_insert symbol [] = [symbol]

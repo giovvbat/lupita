@@ -27,14 +27,14 @@ tokens :-
   scan                                 { \p s -> Scan (getLC p) }
   const                                { \p s -> Const (getLC p) }
   guess                                { \p s -> Guess (getLC p) }
-  int                                  { \p s -> Type (getLC p) s }
-  float                                { \p s -> Type (getLC p) s }
-  bool                                 { \p s -> Type (getLC p) s }
-  string                               { \p s -> Type (getLC p) s }
+  int                                  { \p s -> Type s (getLC p) }
+  float                                { \p s -> Type s (getLC p) }
+  bool                                 { \p s -> Type s (getLC p) }
+  string                               { \p s -> Type s (getLC p) }
   vector                               { \p s -> Vector (getLC p) }
   matrix                               { \p s -> Matrix (getLC p) }
-  true                                 { \p s -> Bool (getLC p) True }
-  false                                { \p s -> Bool (getLC p) False }
+  true                                 { \p s -> Bool True (getLC p) }
+  false                                { \p s -> Bool False (getLC p) }
   "{"                                  { \p s -> BracketLeft (getLC p) }
   "}"                                  { \p s -> BracketRight (getLC p) }
   "["                                  { \p s -> BraceLeft (getLC p) }
@@ -77,10 +77,10 @@ tokens :-
   match                                { \p s -> Match (getLC p) }
   case                                 { \p s -> Case (getLC p) }
   default                              { \p s -> Default (getLC p) }
-  $digit+\.$digit+                     { \p s -> Float (getLC p) (read s) }
-  $digit+                              { \p s -> Int (getLC p) (read s) }
-  \_? [$alpha] [$alpha $digit \_]*     { \p s -> Id (getLC p) s }
-  \"[$char \\.]*\"                     { \p s -> String (getLC p) (read s)}
+  $digit+\.$digit+                     { \p s -> Float (read s) (getLC p) }
+  $digit+                              { \p s -> Int (read s) (getLC p) }
+  \_? [$alpha] [$alpha $digit \_]*     { \p s -> Id s (getLC p) }
+  \"[$char \\.]*\"                     { \p s -> String (read s) (getLC p) }
 {
 -- Each action has type :: String -> Token
 
@@ -143,12 +143,12 @@ data Token =
   Struct (Int, Int) |
   Guess (Int, Int) |
   Enum (Int, Int) |
-  Type (Int, Int) String |
-  Id (Int, Int) String |
-  Float (Int, Int) Float |
-  Int (Int, Int) Int |
-  Bool (Int, Int) Bool |
-  String (Int, Int) String
+  Type String (Int, Int) |
+  Id String (Int, Int) |
+  Float Float (Int, Int) |
+  Int Int (Int, Int) |
+  Bool Bool (Int, Int) |
+  String String (Int, Int)
   deriving (Eq,Show)
 
 getLC (AlexPn _ l c) = (l, c)
