@@ -4,7 +4,7 @@ module Lexer where
 import System.IO
 }
 
-%wrapper "basic"
+%wrapper "posn"
 
 $digit = 0-9
 $alpha = [a-zA-Z]
@@ -14,142 +14,144 @@ tokens :-
 
   $white+                              ;
   "//".*                               ;
-  main                                 { \s -> Main }
-  procedure                            { \s -> Procedure }
-  function                             { \s -> Function }
-  ";"                                  { \s -> SemiColon}
-  ":"                                  { \s -> Colon}
-  ","                                  { \s -> Comma}
-  "."                                  { \s -> Dot}
-  struct                               { \s -> Struct }
-  enum                                 { \s -> Enum }
-  print                                { \s -> Print }
-  scan                                 { \s -> Scan }
-  const                                { \s -> Const }
-  guess                                { \s -> Guess }
-  int                                  { \s -> Type s }
-  float                                { \s -> Type s }
-  bool                                 { \s -> Type s }
-  string                               { \s -> Type s }
-  vector                               { \s -> Vector }
-  matrix                               { \s -> Matrix }
-  true                                 { \s -> Bool True }
-  false                                { \s -> Bool False }
-  "{"                                  { \s -> BracketLeft }
-  "}"                                  { \s -> BracketRight }
-  "["                                  { \s -> BraceLeft }
-  "]"                                  { \s -> BraceRight }
-  "("                                  { \s -> ParenLeft }
-  ")"                                  { \s -> ParenRight }
-  ==                                   { \s -> Equal }
-  "!="                                 { \s -> NotEqual}
-  >                                    { \s -> Greater}
-  >=                                   { \s -> GreaterEq}
-  "<"                                  { \s -> Less}
-  "<="                                 { \s -> LessEq}
-  "+="                                 { \s -> AddAssign}
-  "-="                                 { \s -> SubAssign}
-  "*="                                 { \s -> MulAssign}
-  "/="                                 { \s -> DivAssign}
-  "%="                                 { \s -> RemAssign}
-  "^="                                 { \s -> PowAssign}
-  "and" | "&&"                         { \s -> And}
-  "or" | "||"                          { \s -> Or}
-  "not" | "!"                          { \s -> Not}
-  "+"                                  { \s -> Add}
-  "-"                                  { \s -> Sub}
-  "*"                                  { \s -> Mul}
-  "/"                                  { \s -> Div}
-  "%"                                  { \s -> Rem}
-  "^"                                  { \s -> Pow}
-  =                                    { \s -> Assign}
-  null                                 { \s -> Null }
-  return                               { \s -> Return}
-  break                                { \s -> Break}
-  continue                             { \s -> Continue}
-  leave                                { \s -> Leave}
-  if                                   { \s -> If}
-  else                                 { \s -> Else}
-  while                                { \s -> While}
-  for                                  { \s -> For}
-  repeat                               { \s -> Repeat}
-  until                                { \s -> Until}
-  match                                { \s -> Match}
-  case                                 { \s -> Case}
-  default                              { \s -> Default}
-  $digit+\.$digit+                     { \s -> Float (read s) }
-  $digit+                              { \s -> Int (read s) }
-  \_? [$alpha] [$alpha $digit \_]*     { \s -> Id s }
-  \"[$char \\.]*\"                     { \s -> String (read s)}
+  main                                 { \p s -> Main (getLC p) }
+  procedure                            { \p s -> Procedure (getLC p) }
+  function                             { \p s -> Function (getLC p) }
+  ";"                                  { \p s -> SemiColon (getLC p) }
+  ":"                                  { \p s -> Colon (getLC p) }
+  ","                                  { \p s -> Comma (getLC p) }
+  "."                                  { \p s -> Dot (getLC p) }
+  struct                               { \p s -> Struct (getLC p) }
+  enum                                 { \p s -> Enum (getLC p) }
+  print                                { \p s -> Print (getLC p) }
+  scan                                 { \p s -> Scan (getLC p) }
+  const                                { \p s -> Const (getLC p) }
+  guess                                { \p s -> Guess (getLC p) }
+  int                                  { \p s -> Type (getLC p) s }
+  float                                { \p s -> Type (getLC p) s }
+  bool                                 { \p s -> Type (getLC p) s }
+  string                               { \p s -> Type (getLC p) s }
+  vector                               { \p s -> Vector (getLC p) }
+  matrix                               { \p s -> Matrix (getLC p) }
+  true                                 { \p s -> Bool (getLC p) True }
+  false                                { \p s -> Bool (getLC p) False }
+  "{"                                  { \p s -> BracketLeft (getLC p) }
+  "}"                                  { \p s -> BracketRight (getLC p) }
+  "["                                  { \p s -> BraceLeft (getLC p) }
+  "]"                                  { \p s -> BraceRight (getLC p) }
+  "("                                  { \p s -> ParenLeft (getLC p) }
+  ")"                                  { \p s -> ParenRight (getLC p) }
+  ==                                   { \p s -> Equal (getLC p) }
+  "!="                                 { \p s -> NotEqual (getLC p) }
+  >                                    { \p s -> Greater (getLC p) }
+  >=                                   { \p s -> GreaterEq (getLC p) }
+  "<"                                  { \p s -> Less (getLC p) }
+  "<="                                 { \p s -> LessEq (getLC p) }
+  "+="                                 { \p s -> AddAssign (getLC p) }
+  "-="                                 { \p s -> SubAssign (getLC p) }
+  "*="                                 { \p s -> MulAssign (getLC p) }
+  "/="                                 { \p s -> DivAssign (getLC p) }
+  "%="                                 { \p s -> RemAssign (getLC p) }
+  "^="                                 { \p s -> PowAssign (getLC p) }
+  "and" | "&&"                         { \p s -> And (getLC p) }
+  "or" | "||"                          { \p s -> Or (getLC p) }
+  "not" | "!"                          { \p s -> Not (getLC p) }
+  "+"                                  { \p s -> Add (getLC p) }
+  "-"                                  { \p s -> Sub (getLC p) }
+  "*"                                  { \p s -> Mul (getLC p) }
+  "/"                                  { \p s -> Div (getLC p) }
+  "%"                                  { \p s -> Rem (getLC p) }
+  "^"                                  { \p s -> Pow (getLC p) }
+  =                                    { \p s -> Assign (getLC p) }
+  null                                 { \p s -> Null (getLC p) }
+  return                               { \p s -> Return (getLC p) }
+  break                                { \p s -> Break (getLC p) }
+  continue                             { \p s -> Continue (getLC p) }
+  leave                                { \p s -> Leave (getLC p) }
+  if                                   { \p s -> If (getLC p) }
+  else                                 { \p s -> Else (getLC p) }
+  while                                { \p s -> While (getLC p) }
+  for                                  { \p s -> For (getLC p) }
+  repeat                               { \p s -> Repeat (getLC p) }
+  until                                { \p s -> Until (getLC p) }
+  match                                { \p s -> Match (getLC p) }
+  case                                 { \p s -> Case (getLC p) }
+  default                              { \p s -> Default (getLC p) }
+  $digit+\.$digit+                     { \p s -> Float (getLC p) (read s) }
+  $digit+                              { \p s -> Int (getLC p) (read s) }
+  \_? [$alpha] [$alpha $digit \_]*     { \p s -> Id (getLC p) s }
+  \"[$char \\.]*\"                     { \p s -> String (getLC p) (read s)}
 {
 -- Each action has type :: String -> Token
 
 -- The token type:
 data Token =
-  Main    |
-  Procedure |
-  Function |
-  Comma   |
-  Dot   |
-  SemiColon |
-  Colon |
-  Const |
-  Assign    |
-  AddAssign |
-  SubAssign |
-  MulAssign |
-  DivAssign |
-  RemAssign |
-  PowAssign |
-  Vector  |
-  Matrix  |
-  Print   |
-  Scan    |
-  Add    |
-  Sub    |
-  Mul    |
-  Div    |
-  Rem    |
-  Pow    |
-  And    |
-  Or    |
-  Not    |
-  BracketLeft    |
-  BracketRight    |
-  BraceLeft    |
-  BraceRight    |
-  ParenLeft    |
-  ParenRight    |
-  Return  |
-  Break   |
-  Continue |
-  Leave   |
-  If  |
-  Else  |
-  Match  |
-  Case  |
-  Default  |
-  For  |
-  Null |
-  While  |
-  Repeat  |
-  Until  |
-  NotEqual |
-  Equal |
-  Greater |
-  GreaterEq |
-  Less |
-  LessEq |
-  Struct |
-  Guess |
-  Enum |
-  Type String |
-  Id String |
-  Float Float |
-  Int Int |
-  Bool Bool |
-  String String 
+  Main (Int, Int) |
+  Procedure (Int, Int) |
+  Function (Int, Int) |
+  Comma   (Int, Int) |
+  Dot   (Int, Int) |
+  SemiColon (Int, Int) |
+  Colon (Int, Int) |
+  Const (Int, Int) |
+  Assign    (Int, Int) |
+  AddAssign (Int, Int) |
+  SubAssign (Int, Int) |
+  MulAssign (Int, Int) |
+  DivAssign (Int, Int) |
+  RemAssign (Int, Int) |
+  PowAssign (Int, Int) |
+  Vector  (Int, Int) |
+  Matrix  (Int, Int) |
+  Print   (Int, Int) |
+  Scan    (Int, Int) |
+  Add    (Int, Int) |
+  Sub    (Int, Int) |
+  Mul    (Int, Int) |
+  Div    (Int, Int) |
+  Rem    (Int, Int) |
+  Pow    (Int, Int) |
+  And    (Int, Int) |
+  Or    (Int, Int) |
+  Not    (Int, Int) |
+  BracketLeft   (Int, Int) |
+  BracketRight    (Int, Int) |
+  BraceLeft    (Int, Int) |
+  BraceRight    (Int, Int) |
+  ParenLeft    (Int, Int) |
+  ParenRight    (Int, Int) |
+  Return  (Int, Int) |
+  Break   (Int, Int) |
+  Continue (Int, Int) |
+  Leave   (Int, Int) |
+  If  (Int, Int) |
+  Else  (Int, Int) |
+  Match  (Int, Int) |
+  Case  (Int, Int) |
+  Default  (Int, Int) |
+  For  (Int, Int) |
+  Null (Int, Int) |
+  While  (Int, Int) |
+  Repeat  (Int, Int) |
+  Until  (Int, Int) |
+  NotEqual (Int, Int) |
+  Equal (Int, Int) |
+  Greater (Int, Int) |
+  GreaterEq (Int, Int) |
+  Less (Int, Int) |
+  LessEq (Int, Int) |
+  Struct (Int, Int) |
+  Guess (Int, Int) |
+  Enum (Int, Int) |
+  Type (Int, Int) String |
+  Id (Int, Int) String |
+  Float (Int, Int) Float |
+  Int (Int, Int) Int |
+  Bool (Int, Int) Bool |
+  String (Int, Int) String
   deriving (Eq,Show)
+
+getLC (AlexPn _ l c) = (l, c)
 
 getTokens fn = do
     fh <- openFile fn ReadMode;
