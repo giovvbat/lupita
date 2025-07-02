@@ -11,8 +11,6 @@ import GHC.IO.Device (RawIO (read))
 import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
-import Text.Parsec (ParsecT)
-import Text.Parsec.Token (TokenParser)
 
 -- parsers para os tokens
 
@@ -709,15 +707,25 @@ remaining_expressions =
   )
   <|> return []
 
--- expressão geral
+-- expressão geral (começa pelo or, que tem menor prioridade)
 expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-expression =
-  try boolean_expression
-  <|> try arithmetic_expression
+expression = or_expression
 
--- expressões aritméticas
-arithmetic_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-arithmetic_expression = add_sub_expression
+-- or lógico – associatividade à esquerda
+or_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+or_expression = chainl1 and_expression or_op
+
+-- and lógico – associatividade à esquerda
+and_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+and_expression = chainl1 equal_different_expression and_op
+
+-- igual ou diferente – associatividade à esquerda
+equal_different_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+equal_different_expression = chainl1 greater_lesser_expression equal_different_op
+
+-- maior/igual que e menor/igual que – associatividade à esquerda
+greater_lesser_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
+greater_lesser_expression = chainl1 add_sub_expression greater_lesser_op
 
 -- soma e subtração – associatividade à esquerda
 add_sub_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
@@ -735,8 +743,8 @@ pow_expression = chainr1 unary_expression pow_op
 unary_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
 unary_expression =
   try (do
-    op <- unary_arithmetic_ops
-    expr <- unary_expression
+    op <- unary_ops
+    expr <- expression
     return (op : expr)
   )
   <|> factor
@@ -750,15 +758,36 @@ factor =
   <|> try access_chain
   <|> fmap (:[]) idToken
   <|> try numeric_literal_tokens
+  <|> try boolean_tokens
   <|>
   try (do
     a <- parenLeftToken
-    b <- arithmetic_expression
+    b <- expression
     c <- parenRightToken
     return ([a] ++ b ++ [c])
   )
 
 -- operadores binários
+or_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+or_op = do
+  op <- orToken;
+  return (\a b -> a ++ [op] ++ b)
+
+and_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+and_op = do
+  op <- andToken;
+  return (\a b -> a ++ [op] ++ b)
+
+equal_different_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+equal_different_op = do
+  op <- non_prioritary_comparison_ops;
+  return (\a b -> a ++ [op] ++ b)
+
+greater_lesser_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
+greater_lesser_op = do
+  op <- prioritary_comparison_ops;
+  return (\a b -> a ++ [op] ++ b)
+
 add_sub_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
 add_sub_op =
   (do
@@ -794,68 +823,26 @@ pow_op = do
   return (\a b -> a ++ [op] ++ b)
 
 -- operador unário
-unary_arithmetic_ops :: ParsecT [Token] [(Token, Token)] IO Token
-unary_arithmetic_ops = subToken
+unary_ops :: ParsecT [Token] [(Token, Token)] IO Token
+unary_ops = subToken <|> notToken
 
--- expressões booleanas gerais
-boolean_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-boolean_expression = or_expression
-
--- OR (nível 0) – associatividade à esquerda
-or_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-or_expression = chainl1 and_expression or_op
-
--- AND (nível 1) – associatividade à esquerda
-and_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-and_expression = chainl1 comparison_expression and_op
-
-comparison_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-comparison_expression = chainl1 not_expression comparison_op
-
-not_expression :: ParsecT [Token] [(Token, Token)] IO [Token]
-not_expression =
-  try (do
-    op <- notToken;
-    expr <- not_expression;
-    return (op : expr)
-  )
-  <|> try boolean_factor
-
-boolean_factor :: ParsecT [Token] [(Token, Token)] IO [Token]
-boolean_factor =
-  fmap (: []) boolToken
-  <|> try string_tokens
-  <|> try arithmetic_expression
-  <|> try (do
-    a <- parenLeftToken
-    b <- boolean_expression
-    c <- parenRightToken
-    return ([a] ++ b ++ [c])
-  )
-
-or_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
-or_op = do
-  op <- orToken
-  return (\a b -> a ++ [op] ++ b)
-
-and_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
-and_op = do
-  op <- andToken
-  return (\a b -> a ++ [op] ++ b)
-
-comparison_op :: ParsecT [Token] [(Token, Token)] IO ([Token] -> [Token] -> [Token])
-comparison_op = do
-  op <- all_comparison_ops
-  return (\a b -> a ++ [op] ++ b)
-
-all_comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
-all_comparison_ops =
-  try equalToken
-  <|> try notEqualToken
-  <|> try greaterToken
+prioritary_comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
+prioritary_comparison_ops =
+  try greaterToken
   <|> try greaterEqToken
   <|> try lessToken
   <|> try lessEqToken
+
+non_prioritary_comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
+non_prioritary_comparison_ops =
+  try prioritary_comparison_ops
+  <|> try equalToken
+  <|> try notEqualToken
+
+all_comparison_ops :: ParsecT [Token] [(Token, Token)] IO Token
+all_comparison_ops =
+  try non_prioritary_comparison_ops
+  <|> try prioritary_comparison_ops
 
 access_chain :: ParsecT [Token] [(Token, Token)] IO [Token]
 access_chain = do
@@ -874,7 +861,7 @@ remaining_access_chain =
   <|>
   try (do
     a <- braceLeftToken
-    b <- arithmetic_expression
+    b <- expression
     c <- braceRightToken
     rest <- remaining_access_chain
     return ([a] ++ b ++ [c] ++ rest)
@@ -882,9 +869,9 @@ remaining_access_chain =
   <|>
   try (do
     a <- braceLeftToken
-    b <- arithmetic_expression
+    b <- expression
     c <- commaToken
-    d <- arithmetic_expression
+    d <- expression
     e <- braceRightToken
     rest <- remaining_access_chain
     return ([a] ++ b ++ [c] ++ d ++ [e] ++ rest)
@@ -909,7 +896,7 @@ while :: ParsecT [Token] [(Token, Token)] IO [Token]
 while = do
   a <- whileToken
   b <- parenLeftToken
-  c <- boolean_expression
+  c <- expression
   d <- parenRightToken
   e <- bracketLeftToken
   f <- stmts
@@ -924,7 +911,7 @@ repeat_until = do
   d <- bracketRightToken
   e <- untilToken
   f <- parenLeftToken
-  g <- boolean_expression
+  g <- expression
   h <- parenRightToken
   j <- semiColonToken
   return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
@@ -957,14 +944,14 @@ for_condition =
   try (do
     a <- access_chain
     b <- all_comparison_ops
-    c <- arithmetic_expression
+    c <- expression
     return (a ++ [b] ++ c)
   )
   <|>
   try (do
     a <- idToken
     b <- all_comparison_ops
-    c <- arithmetic_expression
+    c <- expression
     return ([a] ++ [b] ++ c)
   )
 
@@ -973,14 +960,14 @@ for_assign =
   try (do
     a <- access_chain
     b <- all_assign_tokens
-    c <- arithmetic_expression
+    c <- expression
     return (a ++ [b] ++ c)
   )
   <|>
   try (do
     a <- idToken
     b <- all_assign_tokens
-    c <- arithmetic_expression
+    c <- expression
     return ([a] ++ [b] ++ c)
   )
 
@@ -997,7 +984,7 @@ cond_if :: ParsecT [Token] [(Token, Token)] IO [Token]
 cond_if = do
   a <- ifToken
   b <- parenLeftToken
-  c <- boolean_expression
+  c <- expression
   d <- parenRightToken
   e <- bracketLeftToken
   f <- stmts
