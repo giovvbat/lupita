@@ -1,5 +1,14 @@
 procedure main() {
-    a int;
-    c string;
-    d = 8;
+    x float;
+    y float;
+    c int;
+    res float;
+
+    x = 5.0;
+    y = 2.5;
+    c = 3;
+
+    res = x ^ 2 - y + c;
+
+    print(res);
 }

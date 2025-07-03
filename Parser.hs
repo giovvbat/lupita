@@ -5,7 +5,7 @@
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
-import Control.Monad (Functor (fmap), Monad (return))
+import Control.Monad (Functor (fmap), Monad (return), when)
 import Control.Monad.IO.Class
 import GHC.Float (divideDouble)
 import GHC.IO.Device (RawIO (read))
@@ -13,10 +13,33 @@ import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
 
-type SymbolTable = [(Token, Token)]
+-- nome, tipo, escopo, tempo de vida, valor, endereço
+-- nome -> tabela de simbolos junto com escopo escopo#nome
+-- tipo e valor -> unificados
+--
+-- runtime stack
+--
+-- pilha dos escopos
+--
+-- lista de tipos criados por usuário
+--
+-- tabela de subprogramas declarados
+-- nome, parametros, tipo de retorno e codigo
+-- data SubP = Proc ... | Func ...
+--
+-- flag se está executando
+-- falsa se está em declaração de subprograma
+-- verdadeira quando entra na main
 
-data MemoryState = MemoryState { 
-  symtable :: SymbolTable
+type SymbolTable = [(String, Type)]
+
+data Type = Inteiro Int | Flutuante Float | Str String | Booleano Bool | Registro String [(String, Type)]
+    deriving (Show, Eq)
+
+data MemoryState = MemoryState {
+  symtable :: SymbolTable,
+  typetable :: [Type],
+  executing :: Bool
 }
 
 -- parsers para os tokens
@@ -405,13 +428,14 @@ update_pos pos _ [] = pos -- fim do código-fonte
 
 -- parsers para os não-terminais
 
-program :: ParsecT [Token] MemoryState IO [Token]
+program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  print_symtable
+  -- print_symtable
+  -- print_types
   eof
-  return (a ++ b)
+  return ()
 
 initial_declarations :: ParsecT [Token] MemoryState IO [Token]
 initial_declarations =
@@ -424,7 +448,8 @@ initial_declarations =
   try (do
     a <- variable_declarations
     b <- initial_declarations
-    return (a ++ b)
+    return b
+    -- return (a ++ b)
   )
   <|> try (do
     a <- const_declarations
@@ -452,7 +477,8 @@ data_structures_declarations = do
   e <- greaterToken
   h <- semiColonToken
   -- updateState (symtable_insert (a, get_default_value b))
-  return ([a] ++ [b] ++ [c] ++ d ++ [e] ++ [h])
+  return [a]
+  -- return ([a] ++ [b] ++ [c] ++ d ++ [e] ++ [h])
 
 user_defined_types :: ParsecT [Token] MemoryState IO [Token]
 user_defined_types = enum <|> struct
@@ -464,7 +490,9 @@ struct = do
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
-    return ([a] ++ [b] ++ [c] ++ d ++ [e])
+    let Id b_name _ = b in do
+        updateState (typetable_insert $ Registro b_name d)
+        return ([a] ++ [b] ++ [c] ++ [e])
 
 enum :: ParsecT [Token] MemoryState IO [Token]
 enum = do
@@ -473,37 +501,41 @@ enum = do
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
-    return ([a] ++ [b] ++ [c] ++ d ++ [e])
+    return ([a] ++ [b] ++ [c] ++ [e])
+    -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
-user_defined_types_declarations :: ParsecT [Token] MemoryState IO [Token]
+user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
-  first <- try variable_declarations <|> try const_declarations
+  first <- try variable_declarations -- <|> try const_declarations
   next <- remaining_user_defined_types_declarations
-  return (first ++ next)
+  return (first : next)
 
-remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [Token]
+remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 remaining_user_defined_types_declarations =
   (do
-    first <- try variable_declarations <|> try const_declarations
+    first <- try variable_declarations -- <|> try const_declarations
     rest <- remaining_user_defined_types_declarations
-    return (first ++ rest)
+    return (first : rest)
   )
   <|> return []
 
-variable_declarations :: ParsecT [Token] MemoryState IO [Token]
+variable_declarations :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declarations =
   try variable_declaration
-  <|> try variable_declaration_assignment
-  <|> try variable_guess_declaration_assignment
+  -- <|> try variable_declaration_assignment
+  -- <|> try variable_guess_declaration_assignment
 
-variable_declaration :: ParsecT [Token] MemoryState IO [Token]
+variable_declaration :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declaration = do
   a <- idToken
-  b <- typeToken
-  -- b <- all_possible_type_tokens
+  -- b <- typeToken
+  b <- all_possible_type_tokens
   c <- semiColonToken
-  updateState (symtable_insert(a, get_default_value b))
-  return ([a] ++ [b] ++ [c])
+  s <- getState
+  when (executing s) $
+    updateState (symtable_insert (a, b))
+  let Id a_name _ = a in
+    return (a_name, b)
   -- return ([a] ++ b ++ [c])
 
 variable_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
@@ -513,7 +545,8 @@ variable_declaration_assignment = do
   c <- assignToken
   d <- expression
   e <- semiColonToken
-  return ([a] ++ [b] ++ [c] ++ d ++ [e])
+  return [a]
+  -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
 variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
 variable_guess_declaration_assignment = do
@@ -523,7 +556,8 @@ variable_guess_declaration_assignment = do
   d <- expression
   e <- semiColonToken
   --- updateState (symtable_insert (b, get_default_value c))
-  return ([a] ++ [b] ++ [c] ++ d ++ [e])
+  return [a]
+  -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
 
 const_declarations :: ParsecT [Token] MemoryState IO [Token]
 const_declarations =
@@ -547,7 +581,8 @@ const_declaration_assignment = do
   d <- assignToken
   e <- expression
   f <- semiColonToken
-  return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
+  return [a]
+  -- return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
 
 const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
 const_guess_declaration_assignment = do
@@ -557,10 +592,13 @@ const_guess_declaration_assignment = do
   d <- assignToken
   e <- expression
   f <- semiColonToken
-  return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
+  return [a]
+  -- return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
+  s <- getState
+  putState s {executing = True}
   a <- procedureToken
   b <- mainToken
   c <- parenLeftToken
@@ -569,7 +607,8 @@ m = do
   f <- bracketLeftToken
   g <- stmts
   h <- bracketRightToken
-  return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
+  return [a]
+  -- return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
 
 subprograms :: ParsecT [Token] MemoryState IO [Token]
 subprograms = try function <|> try procedure
@@ -584,7 +623,8 @@ procedure = do
   f <- bracketLeftToken
   g <- stmts
   h <- bracketRightToken
-  return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
+  return [a]
+  -- return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
 
 function :: ParsecT [Token] MemoryState IO [Token]
 function = do
@@ -597,30 +637,32 @@ function = do
   g <- bracketLeftToken
   h <- stmts
   i <- bracketRightToken
-  return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
+  return [a]
+  -- return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
 
-param :: ParsecT [Token] MemoryState IO [Token]
+param :: ParsecT [Token] MemoryState IO (String, Type)
 param = do
   a <- idToken
   b <- all_possible_type_tokens
-  return (a : b)
+  let Id a_name _ = a in
+    return (a_name, b)
 
-params :: ParsecT [Token] MemoryState IO [Token]
+params :: ParsecT [Token] MemoryState IO [(String, Type)]
 params =
   (do
     first <- param
     next <- remainingParams
-    return (first ++ next)
+    return (first : next)
   )
   <|> return []
 
-remainingParams :: ParsecT [Token] MemoryState IO [Token]
+remainingParams :: ParsecT [Token] MemoryState IO [(String, Type)]
 remainingParams =
   (do
     a <- commaToken
     b <- param
     c <- remainingParams
-    return (a : b ++ c)
+    return (b : c)
   )
   <|> return []
 
@@ -646,7 +688,9 @@ stmt =
   <|> try conditional
   <|> try procedure_call
   <|> try assign
-  <|> try variable_declarations
+  <|> do
+    try variable_declarations
+    return []
   <|> try const_declarations
   <|> try data_structures_declarations
   <|> try function_return
@@ -668,10 +712,12 @@ assign =
     -- a <- access_chain
     a <- idToken
     b <- all_assign_tokens
-    c <- intToken
+    c <- expression
     d <- semiColonToken
+    s <- getState
     updateState (symtable_update (a, c))
-    return ([a] ++ [b] ++ [c] ++ [d])
+    return [a]
+    -- return ([a] ++ [b] ++ [c] ++ [d])
   )
   <|>
   try (do
@@ -680,7 +726,8 @@ assign =
     c <- expression
     d <- semiColonToken
     -- updateState (symtable_update (a, c))
-    return ([a] ++ [b] ++ c ++ [d])
+    return [a]
+    -- return ([a] ++ [b] ++ c ++ [d])
   )
 
 procedure_call :: ParsecT [Token] MemoryState IO [Token]
@@ -691,7 +738,8 @@ procedure_call =
     c <- expressions <|> return []
     d <- parenRightToken
     e <- semiColonToken
-    return ([a, b] ++ c ++ [d] ++ [e])
+    return [a]
+    -- return ([a, b] ++ c ++ [d] ++ [e])
   )
   <|> try print_procedure
 
@@ -700,74 +748,78 @@ function_return = do
   a <- returnToken
   b <- expression
   c <- semiColonToken
-  return ([a] ++ b ++ [c])
+  return [a]
+  -- return ([a] ++ b ++ [c])
 
-expressions :: ParsecT [Token] MemoryState IO [Token]
+expressions :: ParsecT [Token] MemoryState IO [Type]
 expressions = do
   first <- expression
   next <- remaining_expressions
-  return (first ++ next)
+  return (first : next)
 
-remaining_expressions :: ParsecT [Token] MemoryState IO [Token]
+remaining_expressions :: ParsecT [Token] MemoryState IO [Type]
 remaining_expressions =
   (do
     a <- commaToken
     b <- expression
     c <- remaining_expressions
-    return (a : b ++ c)
+    return (b : c)
   )
   <|> return []
 
 -- expressão geral (começa pelo or, que tem menor prioridade)
-expression :: ParsecT [Token] MemoryState IO [Token]
+expression :: ParsecT [Token] MemoryState IO Type
 expression = or_expression
 
 -- or lógico – associatividade à esquerda
-or_expression :: ParsecT [Token] MemoryState IO [Token]
+or_expression :: ParsecT [Token] MemoryState IO Type
 or_expression = chainl1 and_expression or_op
 
 -- and lógico – associatividade à esquerda
-and_expression :: ParsecT [Token] MemoryState IO [Token]
-and_expression = chainl1 equal_different_expression and_op
+and_expression :: ParsecT [Token] MemoryState IO Type
+and_expression = do
+    chainl1 add_sub_expression and_op
+-- and_expression = chainl1 equal_different_expression and_op
 
 -- igual ou diferente – associatividade à esquerda
-equal_different_expression :: ParsecT [Token] MemoryState IO [Token]
-equal_different_expression = chainl1 greater_lesser_expression equal_different_op
+-- equal_different_expression :: ParsecT [Token] MemoryState IO [Token]
+-- equal_different_expression = chainl1 greater_lesser_expression equal_different_op
 
 -- maior/igual que e menor/igual que – associatividade à esquerda
-greater_lesser_expression :: ParsecT [Token] MemoryState IO [Token]
-greater_lesser_expression = chainl1 add_sub_expression greater_lesser_op
+-- greater_lesser_expression :: ParsecT [Token] MemoryState IO [Token]
+-- greater_lesser_expression = chainl1 add_sub_expression greater_lesser_op
 
 -- soma e subtração – associatividade à esquerda
-add_sub_expression :: ParsecT [Token] MemoryState IO [Token]
+add_sub_expression :: ParsecT [Token] MemoryState IO Type
 add_sub_expression = chainl1 mul_div_rem_expression add_sub_op
 
 -- multiplicação, divisão e resto – associatividade à esquerda
-mul_div_rem_expression :: ParsecT [Token] MemoryState IO [Token]
+mul_div_rem_expression :: ParsecT [Token] MemoryState IO Type
 mul_div_rem_expression = chainl1 pow_expression mul_div_rem_op
 
 -- potência – associatividade à direita
-pow_expression :: ParsecT [Token] MemoryState IO [Token]
+pow_expression :: ParsecT [Token] MemoryState IO Type
 pow_expression = chainr1 unary_expression pow_op
 
 -- unário (ex: -x)
-unary_expression :: ParsecT [Token] MemoryState IO [Token]
+unary_expression :: ParsecT [Token] MemoryState IO Type
 unary_expression =
   try (do
     op <- unary_ops
-    expr <- expression
-    return (op : expr)
+    op <$> expression
   )
   <|> factor
 
 -- fatores: unidades atômicas da expressão
-factor :: ParsecT [Token] MemoryState IO [Token]
+factor :: ParsecT [Token] MemoryState IO Type
 factor =
-  fmap (:[]) nullToken
-  <|> try string_tokens
-  <|> try function_call
-  <|> try access_chain
-  <|> fmap (:[]) idToken
+  -- fmap (:[]) nullToken
+  try string_tokens
+  -- <|> try function_call
+  -- <|> try access_chain
+  <|> do
+    a <- idToken
+    get_variable a <$> getState
   <|> try numeric_literal_tokens
   <|> try boolean_tokens
   <|>
@@ -775,19 +827,26 @@ factor =
     a <- parenLeftToken
     b <- expression
     c <- parenRightToken
-    return ([a] ++ b ++ [c])
+    return b
+    -- return ([a] ++ b ++ [c])
   )
 
 -- operadores binários
-or_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
+or_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 or_op = do
   op <- orToken;
-  return (\a b -> a ++ [op] ++ b)
+  return (\a b -> case (a, b) of
+      (Booleano x, Booleano y) -> Booleano (x || y)
+      (_, _) -> error "tipo inesperado"
+    )
 
-and_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
+and_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 and_op = do
   op <- andToken;
-  return (\a b -> a ++ [op] ++ b)
+  return (\a b -> case (a, b) of
+      (Booleano x, Booleano y) -> Booleano (x && y)
+      (_, _) -> error "tipo inesperado"
+    )
 
 equal_different_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
 equal_different_op = do
@@ -799,43 +858,92 @@ greater_lesser_op = do
   op <- prioritary_comparison_ops;
   return (\a b -> a ++ [op] ++ b)
 
-add_sub_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
+add_sub_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 add_sub_op =
   (do
     op <- addToken;
-    return (\a b -> a ++ [op] ++ b)
+    return do_add_op
   )
   <|>
   (do
     op <- subToken;
-    return (\a b -> a ++ [op] ++ b)
+    return do_sub_op
   )
 
-mul_div_rem_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
+do_add_op :: Type -> Type -> Type
+do_add_op (Inteiro a) (Inteiro b) = Inteiro $ a + b
+do_add_op (Flutuante a) (Inteiro b) = Flutuante $ a + fromIntegral b
+do_add_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a + b
+do_add_op (Flutuante a) (Flutuante b) = Flutuante $ a + b
+
+do_sub_op :: Type -> Type -> Type
+do_sub_op (Inteiro a) (Inteiro b) = Inteiro $ a - b
+do_sub_op (Flutuante a) (Inteiro b) = Flutuante $ a - fromIntegral b
+do_sub_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a - b
+do_sub_op (Flutuante a) (Flutuante b) = Flutuante $ a - b
+
+mul_div_rem_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 mul_div_rem_op =
   (do
     op <- mulToken;
-    return (\a b -> a ++ [op] ++ b)
+    return do_mul_op
   )
   <|>
   (do
     op <- divToken;
-    return (\a b -> a ++ [op] ++ b)
+    return do_div_op
   )
   <|>
   (do
     op <- remToken;
-    return (\a b -> a ++ [op] ++ b)
+    return do_rem_op
   )
 
-pow_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
+do_mul_op :: Type -> Type -> Type
+do_mul_op (Inteiro a) (Inteiro b) = Inteiro $ a * b
+do_mul_op (Flutuante a) (Inteiro b) = Flutuante $ a * fromIntegral b
+do_mul_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a * b
+do_mul_op (Flutuante a) (Flutuante b) = Flutuante $ a * b
+
+do_div_op :: Type -> Type -> Type
+do_div_op (Inteiro a) (Inteiro b) = Inteiro $ a `div` b
+do_div_op (Flutuante a) (Inteiro b) = Flutuante $ a / fromIntegral b
+do_div_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a / b
+do_div_op (Flutuante a) (Flutuante b) = Flutuante $ a / b
+
+do_rem_op :: Type -> Type -> Type
+do_rem_op (Inteiro a) (Inteiro b) = Inteiro $ a `mod` b
+
+pow_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 pow_op = do
   op <- powToken
-  return (\a b -> a ++ [op] ++ b)
+  return do_pow_op
+
+do_pow_op :: Type -> Type -> Type
+do_pow_op (Inteiro a) (Inteiro b) = Inteiro $ a ^ b
+do_pow_op (Flutuante a) (Inteiro b) = Flutuante $ a ** fromIntegral b
+do_pow_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a ** b
+do_pow_op (Flutuante a) (Flutuante b) = Flutuante $ a ** b
 
 -- operador unário
-unary_ops :: ParsecT [Token] MemoryState IO Token
-unary_ops = subToken <|> notToken
+unary_ops :: ParsecT [Token] MemoryState IO (Type -> Type)
+unary_ops =
+    (do
+    op <- subToken;
+    return do_neg_op
+    )
+    <|>
+    (do
+    op <- notToken;
+    return do_not_op
+    )
+
+do_neg_op :: Type -> Type
+do_neg_op (Inteiro a) = Inteiro $ -a
+do_neg_op (Flutuante a) = Flutuante $ -a
+
+do_not_op :: Type -> Type
+do_not_op (Booleano a) = Booleano $ not a
 
 prioritary_comparison_ops :: ParsecT [Token] MemoryState IO Token
 prioritary_comparison_ops =
@@ -869,24 +977,24 @@ remaining_access_chain =
     rest <- remaining_access_chain
     return ([a] ++ [b] ++ rest)
   )
-  <|>
-  try (do
-    a <- braceLeftToken
-    b <- expression
-    c <- braceRightToken
-    rest <- remaining_access_chain
-    return ([a] ++ b ++ [c] ++ rest)
-  )
-  <|>
-  try (do
-    a <- braceLeftToken
-    b <- expression
-    c <- commaToken
-    d <- expression
-    e <- braceRightToken
-    rest <- remaining_access_chain
-    return ([a] ++ b ++ [c] ++ d ++ [e] ++ rest)
-  )
+  -- <|>
+  -- try (do
+  --   a <- braceLeftToken
+  --   b <- expression
+  --   c <- braceRightToken
+  --   rest <- remaining_access_chain
+  --   return ([a] ++ b ++ [c] ++ rest)
+  -- )
+  -- <|>
+  -- try (do
+  --   a <- braceLeftToken
+  --   b <- expression
+  --   c <- commaToken
+  --   d <- expression
+  --   e <- braceRightToken
+  --   rest <- remaining_access_chain
+  --   return ([a] ++ b ++ [c] ++ d ++ [e] ++ rest)
+  -- )
   <|> return []
 
 function_call :: ParsecT [Token] MemoryState IO [Token]
@@ -896,7 +1004,8 @@ function_call =
     b <- parenLeftToken
     c <- expressions <|> return []
     d <- parenRightToken
-    return ([a, b] ++ c ++ [d])
+    return [a]
+    -- return ([a, b] ++ c ++ [d])
   )
   <|> try scan_function
 
@@ -912,7 +1021,8 @@ while = do
   e <- bracketLeftToken
   f <- stmts
   g <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
+  return [a]
+  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
 repeat_until :: ParsecT [Token] MemoryState IO [Token]
 repeat_until = do
@@ -925,7 +1035,8 @@ repeat_until = do
   g <- expression
   h <- parenRightToken
   j <- semiColonToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
+  return [a]
+  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
 
 for :: ParsecT [Token] MemoryState IO [Token]
 for = do
@@ -956,14 +1067,16 @@ for_condition =
     a <- access_chain
     b <- all_comparison_ops
     c <- expression
-    return (a ++ [b] ++ c)
+    return a
+    -- return (a ++ [b] ++ c)
   )
   <|>
   try (do
     a <- idToken
     b <- all_comparison_ops
     c <- expression
-    return ([a] ++ [b] ++ c)
+    return [a]
+    -- return ([a] ++ [b] ++ c)
   )
 
 for_assign :: ParsecT [Token] MemoryState IO [Token]
@@ -972,14 +1085,16 @@ for_assign =
     a <- access_chain
     b <- all_assign_tokens
     c <- expression
-    return (a ++ [b] ++ c)
+    return a
+    -- return (a ++ [b] ++ c)
   )
   <|>
   try (do
     a <- idToken
     b <- all_assign_tokens
     c <- expression
-    return ([a] ++ [b] ++ c)
+    return [a]
+    -- return ([a] ++ [b] ++ c)
   )
 
 conditional :: ParsecT [Token] MemoryState IO [Token]
@@ -1000,7 +1115,8 @@ cond_if = do
   e <- bracketLeftToken
   f <- stmts
   g <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
+  return [a]
+  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
 cond_else :: ParsecT [Token] MemoryState IO [Token]
 cond_else =
@@ -1023,7 +1139,8 @@ match_case = do
   e <- bracketLeftToken
   f <- cases
   h <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [h])
+  return [a]
+  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [h])
 
 cases :: ParsecT [Token] MemoryState IO [Token]
 cases =
@@ -1056,26 +1173,28 @@ single_case = do
 
 case_expression :: ParsecT [Token] MemoryState IO [Token]
 case_expression =
-  try expression
-  <|>
+  -- try expression
+  -- <|>
   try (do
     a <- parenLeftToken
     b <- expression
     c <- remaining_case_expression
     d <- parenRightToken
-    return ([a] ++ b ++ c ++ [d])
+    return [a]
+    -- return ([a] ++ b ++ c ++ [d])
   )
 
 remaining_case_expression :: ParsecT [Token] MemoryState IO [Token]
-remaining_case_expression = 
+remaining_case_expression =
   try (do
     a <- commaToken
     b <- expression
     c <- remaining_case_expression
-    return ([a] ++ b ++ c)
+    return [a]
+    -- return ([a] ++ b ++ c)
   )
   <|> return []
-  
+
 default_case :: ParsecT [Token] MemoryState IO [Token]
 default_case = do
     a <- defaultToken
@@ -1083,44 +1202,52 @@ default_case = do
     c <- stmts
     return ([a] ++ [b] ++ c)
 
-numeric_literal_tokens :: ParsecT [Token] MemoryState IO [Token]
+numeric_literal_tokens :: ParsecT [Token] MemoryState IO Type
 numeric_literal_tokens = do
   a <- try intToken <|> try floatToken
-  return [a]
+  get_type a <$> getState
 
-all_possible_type_tokens :: ParsecT [Token] MemoryState IO [Token]
+all_possible_type_tokens :: ParsecT [Token] MemoryState IO Type
 all_possible_type_tokens =
   try (do
     a <- try idToken <|> try typeToken
-    return [a]
+    get_type a <$> getState
   )
-  <|>
-  try (do
-    a <- matrixToken <|> vectorToken
-    b <- lessToken
-    c <- all_possible_type_tokens
-    d <- greaterToken
-    return ([a] ++ [b] ++ c ++ [d])
-  )
+  -- <|>
+  -- try (do
+  --   a <- matrixToken <|> vectorToken
+  --   b <- lessToken
+  --   c <- all_possible_type_tokens
+  --   d <- greaterToken
+  --   return ([a] ++ [b] ++ c ++ [d])
+  -- )
 
-string_tokens :: ParsecT [Token] MemoryState IO [Token]
+string_tokens :: ParsecT [Token] MemoryState IO Type
 string_tokens = do
   a <- stringToken
-  return [a]
+  get_type a <$> getState
 
-boolean_tokens :: ParsecT [Token] MemoryState IO [Token]
+boolean_tokens :: ParsecT [Token] MemoryState IO Type
 boolean_tokens = do
   a <- boolToken
-  return [a]
+  get_type a <$> getState
 
 print_procedure :: ParsecT [Token] MemoryState IO [Token]
 print_procedure = do
   a <- printToken
   b <- parenLeftToken
-  c <- expression <|> return []
+  c <- expression <|> return (Str "")
   d <- parenRightToken
   e <- semiColonToken
-  return ([a, b] ++ c ++ [d] ++ [e])
+  liftIO $ putStrLn $ print_type c
+  return [a]
+
+print_type :: Type -> String
+print_type (Inteiro x) = show x
+print_type (Flutuante x) = show x
+print_type (Str x) = show x
+print_type (Booleano x) = show x
+print_type p = show p
 
 scan_function :: ParsecT [Token] MemoryState IO [Token]
 scan_function = do
@@ -1137,25 +1264,49 @@ all_escapes_stmts = do
 
 -- funções para a tabela de símbolos
 
-get_default_value :: Token -> Token
-get_default_value (Type "int" p) = Int 0 p
-get_default_value (Type "string" p) = String "" p
-get_default_value (Type "float" p) = Float 0.0 p
-get_default_value (Type "bool" p) = Bool False p
+get_type :: Token -> MemoryState -> Type
+get_type (Type "int" _) _ = Inteiro 0
+get_type (Type "string" _) _ = Str ""
+get_type (Type "float" _) _ = Flutuante 0.0
+get_type (Type "bool" _) _ = Booleano False
+get_type (Int x _) _ = Inteiro x
+get_type (String x _) _ = Str x
+get_type (Float x _) _ = Flutuante x
+get_type (Bool x _) _ = Booleano x
+get_type token@(Id x _) (MemoryState _ table _) = lookup_type token table
 
-symtable_insert :: (Token, Token) -> MemoryState -> MemoryState
-symtable_insert symbol@(Id current_name (line, column), _) st@(MemoryState current_table)= do
-    let declared_names = [name | (Id name _, _) <- current_table]
-    if current_name `elem` declared_names
-    then error $ "variable \"" ++ current_name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
-    else st { symtable = current_table ++ [symbol] }
+get_variable :: Token -> MemoryState -> Type
+get_variable token@(Id x _) (MemoryState table _ _) = lookup_variable token table
 
-symtable_update :: (Token, Token) -> MemoryState -> MemoryState
-symtable_update (Id id (line, column), _) (MemoryState []) = error $ "variable \"" ++ id ++ "\" not found: line " ++ show line ++ " column " ++ show column
-symtable_update (Id id1 p1, v1) st@(MemoryState ((Id id2 p2, v2) : t)) =
+lookup_variable :: Token -> [(String, Type)] -> Type
+lookup_variable (Id name (line, column)) [] = error $ "undefined variable \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
+lookup_variable token@(Id name _) ((name2, typ) : rest)
+    | name == name2 = typ
+    | otherwise = lookup_variable token rest
+
+lookup_type :: Token -> [Type] -> Type
+lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
+lookup_type token@(Id name _) (t@(Registro name2 _) : rest)
+    | name == name2 = t
+    | otherwise = lookup_type token rest
+
+typetable_insert :: Type -> MemoryState -> MemoryState
+typetable_insert t@(Registro current_name fields) st@(MemoryState _ table _) = do
+    st {typetable = table ++ [t]}
+
+symtable_insert :: (Token, Type) -> MemoryState -> MemoryState
+symtable_insert (Id name (line, column), typ) st@(MemoryState current_table _ _)= do
+    let declared_names = [name | (name, _) <- current_table] in
+        if name `elem` declared_names
+        then error $ "variable \"" ++ name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
+        else st { symtable = current_table ++ [(name, typ)] }
+
+symtable_update :: (Token, Type) -> MemoryState -> MemoryState
+symtable_update (Id id (line, column), _) (MemoryState [] _ _) = error $ "variable \"" ++ id ++ "\" not found: line " ++ show line ++ " column " ++ show column
+symtable_update (Id id1 p1, v1) st@(MemoryState ((id2, v2) : t) _ _) =
   if id1 == id2
-    then st {symtable = (Id id1 p2, v1) : t}
-    else st {symtable = (Id id2 p2, v2) : symtable (symtable_update (Id id1 p1, v1) st {symtable = t})}
+    then st {symtable = (id1, v1) : t}
+    else st {symtable = (id2, v2) : symtable (symtable_update (Id id1 p1, v1) st {symtable = t})}
 
 -- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
 -- symtable_remove _ [] = fail "variable not found"
@@ -1169,10 +1320,15 @@ print_symtable = do
   st <- getState
   liftIO $ putStrLn ("symtable: " ++ show (symtable st) ++ "\n")
 
+print_types :: ParsecT [Token] MemoryState IO ()
+print_types = do
+  st <- getState
+  liftIO $ putStrLn ("types: " ++ show (typetable st) ++ "\n")
+
 -- invocação do parser para o símbolo de partida
 
-parser :: [Token] -> IO (Either ParseError [Token])
-parser = runParserT program (MemoryState { symtable = [] }) "Parsing error!"
+parser :: [Token] -> IO (Either ParseError ())
+parser = runParserT program (MemoryState { symtable = [] , typetable = [], executing = False}) "Parsing error!"
 
 main :: IO ()
 main = do
@@ -1180,4 +1336,4 @@ main = do
   result <- parser tokens
   case result of
     Left err -> print err
-    Right ans -> print ans
+    Right ans -> return ()
