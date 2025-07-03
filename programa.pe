@@ -1,4 +1,5 @@
 procedure main() {
     a int;
     c string;
+    d = 8;
 }

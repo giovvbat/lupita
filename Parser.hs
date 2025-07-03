@@ -502,7 +502,7 @@ variable_declaration = do
   b <- typeToken
   -- b <- all_possible_type_tokens
   c <- semiColonToken
-  safe_symtable_insert(a, get_default_value b)
+  symtable_insert(a, get_default_value b)
   return ([a] ++ [b] ++ [c])
   -- return ([a] ++ b ++ [c])
 
@@ -665,12 +665,13 @@ all_assign_tokens =
 assign :: ParsecT [Token] MemoryState IO [Token]
 assign =
   try (do
-    a <- access_chain
+    -- a <- access_chain
+    a <- idToken
     b <- all_assign_tokens
-    c <- expression
+    c <- intToken
     d <- semiColonToken
-    -- updateState (symtable_update (a, c))
-    return (a ++ [b] ++ c ++ [d])
+    symtable_update (a, c)
+    return ([a] ++ [b] ++ [c] ++ [d])
   )
   <|>
   try (do
@@ -1142,8 +1143,8 @@ get_default_value (Type "string" p) = String "" p
 get_default_value (Type "float" p) = Float 0.0 p
 get_default_value (Type "bool" p) = Bool False p
 
-safe_symtable_insert :: (Token, Token) -> ParsecT [Token] MemoryState IO ()
-safe_symtable_insert symbol@(Id current_name (line, column), _) = do
+symtable_insert :: (Token, Token) -> ParsecT [Token] MemoryState IO ()
+symtable_insert symbol@(Id current_name (line, column), _) = do
   st <- getState
   let current_table = symtable st
       declared_names = [name | (Id name _, _) <- current_table]
@@ -1151,24 +1152,39 @@ safe_symtable_insert symbol@(Id current_name (line, column), _) = do
     then fail $ "variable \"" ++ current_name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
     else putState $ st { symtable = current_table ++ [symbol] }
 
-symtable_update :: (Token, Token) -> MemoryState -> MemoryState
-symtable_update _ = fail "variable not found"
-symtable_update (id1, v1) ((id2, v2) : t) =
-  if id1 == id2
-    then (id1, v1) : t
-    else (id2, v2) : symtable_update (id1, v1) t
+symtable_update :: (Token, Token) -> ParsecT [Token] MemoryState IO ()
+symtable_update (Id name (line, column), new_value) = do
+  st <- getState
+  let current_table = symtable st
+    -- função auxiliar para atualizar lista por nome, ignorando posição
+      update [] = Nothing
+      update ((Id current_name current_position, current_value) : t)
+        | name == current_name = Just ((Id current_name current_position, new_value) : t)
+        | otherwise = do
+            rest <- update t
+            Just ((Id current_name current_position, current_value) : rest)
+  case update current_table of
+    Nothing -> fail $ "variable \"" ++ name ++ "\" not found: line " ++ show line ++ " column " ++ show column
+    Just new_symtable -> putState $ st { symtable = new_symtable }
 
-symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
-symtable_remove _ [] = fail "variable not found"
-symtable_remove (id1, v1) ((id2, v2) : t) =
-  if id1 == id2
-    then t
-    else (id2, v2) : symtable_remove (id1, v1) t
+-- symtable_update :: (Token, Token) -> MemoryState -> MemoryState
+-- symtable_update _ = fail "variable not found"
+-- symtable_update (id1, v1) ((id2, v2) : t) =
+--   if id1 == id2
+--     then (id1, v1) : t
+--     else (id2, v2) : symtable_update (id1, v1) t
+
+-- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
+-- symtable_remove _ [] = fail "variable not found"
+-- symtable_remove (id1, v1) ((id2, v2) : t) =
+--   if id1 == id2
+--     then t
+--     else (id2, v2) : symtable_remove (id1, v1) t
 
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do
   st <- getState
-  liftIO $ putStrLn ("Tabela de símbolos: " ++ show (symtable st) ++ "\n\n\n\n\n")
+  liftIO $ putStrLn ("symtable: " ++ show (symtable st) ++ "\n")
 
 -- invocação do parser para o símbolo de partida
 
