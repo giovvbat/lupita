@@ -8,7 +8,6 @@ import Control.Arrow (Arrow (first))
 import Control.Monad (Functor (fmap), Monad (return), when)
 import Control.Monad.IO.Class
 import GHC.Float (divideDouble)
-import GHC.IO.Device (RawIO (read))
 import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
@@ -432,8 +431,8 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  -- print_symtable
-  -- print_types
+  print_symtable
+  print_types
   eof
   return ()
 
@@ -715,7 +714,8 @@ assign =
     c <- expression
     d <- semiColonToken
     s <- getState
-    updateState (symtable_update (a, c))
+    when (executing s) $
+        updateState (symtable_update (a, c))
     return [a]
     -- return ([a] ++ [b] ++ [c] ++ [d])
   )
@@ -777,17 +777,15 @@ or_expression = chainl1 and_expression or_op
 
 -- and lógico – associatividade à esquerda
 and_expression :: ParsecT [Token] MemoryState IO Type
-and_expression = do
-    chainl1 add_sub_expression and_op
--- and_expression = chainl1 equal_different_expression and_op
+and_expression = chainl1 equal_different_expression and_op
 
 -- igual ou diferente – associatividade à esquerda
--- equal_different_expression :: ParsecT [Token] MemoryState IO [Token]
--- equal_different_expression = chainl1 greater_lesser_expression equal_different_op
+equal_different_expression :: ParsecT [Token] MemoryState IO Type
+equal_different_expression = chainl1 greater_lesser_expression equal_different_op
 
 -- maior/igual que e menor/igual que – associatividade à esquerda
--- greater_lesser_expression :: ParsecT [Token] MemoryState IO [Token]
--- greater_lesser_expression = chainl1 add_sub_expression greater_lesser_op
+greater_lesser_expression :: ParsecT [Token] MemoryState IO Type
+greater_lesser_expression = chainl1 add_sub_expression greater_lesser_op
 
 -- soma e subtração – associatividade à esquerda
 add_sub_expression :: ParsecT [Token] MemoryState IO Type
@@ -815,7 +813,7 @@ factor :: ParsecT [Token] MemoryState IO Type
 factor =
   -- fmap (:[]) nullToken
   try string_tokens
-  -- <|> try function_call
+  <|> try function_call
   -- <|> try access_chain
   <|> do
     a <- idToken
@@ -848,15 +846,73 @@ and_op = do
       (_, _) -> error "tipo inesperado"
     )
 
-equal_different_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
-equal_different_op = do
-  op <- non_prioritary_comparison_ops;
-  return (\a b -> a ++ [op] ++ b)
+equal_different_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
+equal_different_op = (do
+        op <- equalToken
+        return do_equal_op
+    ) <|>
+    (do
+        op <- notEqualToken
+        return do_different_op
+    )
 
-greater_lesser_op :: ParsecT [Token] MemoryState IO ([Token] -> [Token] -> [Token])
-greater_lesser_op = do
-  op <- prioritary_comparison_ops;
-  return (\a b -> a ++ [op] ++ b)
+do_equal_op :: Type -> Type -> Type
+do_equal_op (Inteiro a) (Inteiro b) = Booleano $ a == b
+do_equal_op (Flutuante a) (Flutuante b) = Booleano $ a == b
+do_equal_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a == b
+do_equal_op (Flutuante a) (Inteiro b) = Booleano $ a == fromIntegral b
+do_equal_op (Str a) (Str b) = Booleano $ a == b
+do_equal_op (Booleano a) (Booleano b) = Booleano $ a == b
+
+do_different_op :: Type -> Type -> Type
+do_different_op (Inteiro a) (Inteiro b) = Booleano $ a /= b
+do_different_op (Flutuante a) (Flutuante b) = Booleano $ a /= b
+do_different_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a /= b
+do_different_op (Flutuante a) (Inteiro b) = Booleano $ a /= fromIntegral b
+do_different_op (Str a) (Str b) = Booleano $ a /= b
+do_different_op (Booleano a) (Booleano b) = Booleano $ a /= b
+
+greater_lesser_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
+greater_lesser_op = (do
+        op <- greaterToken
+        return do_greater_op
+    ) <|>
+    (do
+        op <- greaterEqToken
+        return do_greater_eq_op
+    ) <|>
+    (do
+        op <- lessToken
+        return do_less_op
+    ) <|>
+    (do
+        op <- lessEqToken
+        return do_less_eq_op
+    )
+
+do_greater_op :: Type -> Type -> Type
+do_greater_op (Inteiro a) (Inteiro b) = Booleano $ a > b
+do_greater_op (Flutuante a) (Flutuante b) = Booleano $ a > b
+do_greater_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a > b
+do_greater_op (Flutuante a) (Inteiro b) = Booleano $ a > fromIntegral b
+
+do_greater_eq_op :: Type -> Type -> Type
+do_greater_eq_op (Inteiro a) (Inteiro b) = Booleano $ a >= b
+do_greater_eq_op (Flutuante a) (Flutuante b) = Booleano $ a >= b
+do_greater_eq_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a >= b
+do_greater_eq_op (Flutuante a) (Inteiro b) = Booleano $ a >= fromIntegral b
+
+do_less_op :: Type -> Type -> Type
+do_less_op (Inteiro a) (Inteiro b) = Booleano $ a < b
+do_less_op (Flutuante a) (Flutuante b) = Booleano $ a < b
+do_less_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a < b
+do_less_op (Flutuante a) (Inteiro b) = Booleano $ a < fromIntegral b
+
+do_less_eq_op :: Type -> Type -> Type
+do_less_eq_op (Inteiro a) (Inteiro b) = Booleano $ a <= b
+do_less_eq_op (Flutuante a) (Flutuante b) = Booleano $ a <= b
+do_less_eq_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a <= b
+do_less_eq_op (Flutuante a) (Inteiro b) = Booleano $ a <= fromIntegral b
 
 add_sub_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 add_sub_op =
@@ -875,12 +931,17 @@ do_add_op (Inteiro a) (Inteiro b) = Inteiro $ a + b
 do_add_op (Flutuante a) (Inteiro b) = Flutuante $ a + fromIntegral b
 do_add_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a + b
 do_add_op (Flutuante a) (Flutuante b) = Flutuante $ a + b
+do_add_op (Str a) (Str b) = Str $ a ++ b
+do_add_op (Str a) b = Str $ a ++ type_to_string b
+do_add_op a (Str b) = Str $ type_to_string a ++ b
+do_add_op _ _ = error "tipo inesperado"
 
 do_sub_op :: Type -> Type -> Type
 do_sub_op (Inteiro a) (Inteiro b) = Inteiro $ a - b
 do_sub_op (Flutuante a) (Inteiro b) = Flutuante $ a - fromIntegral b
 do_sub_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a - b
 do_sub_op (Flutuante a) (Flutuante b) = Flutuante $ a - b
+do_sub_op _ _ = error "tipo inesperado"
 
 mul_div_rem_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 mul_div_rem_op =
@@ -997,17 +1058,18 @@ remaining_access_chain =
   -- )
   <|> return []
 
-function_call :: ParsecT [Token] MemoryState IO [Token]
+function_call :: ParsecT [Token] MemoryState IO Type
 function_call =
-  try (do
-    a <- idToken
-    b <- parenLeftToken
-    c <- expressions <|> return []
-    d <- parenRightToken
-    return [a]
-    -- return ([a, b] ++ c ++ [d])
-  )
-  <|> try scan_function
+  -- try (do
+  --   a <- idToken
+  --   b <- parenLeftToken
+  --   c <- expressions <|> return []
+  --   d <- parenRightToken
+  --   return c
+  --   -- return ([a, b] ++ c ++ [d])
+  -- )
+  -- <|> 
+  try scan_function
 
 loop :: ParsecT [Token] MemoryState IO [Token]
 loop = while <|> repeat_until <|> for
@@ -1108,13 +1170,17 @@ if_else = do
 
 cond_if :: ParsecT [Token] MemoryState IO [Token]
 cond_if = do
+  exec <- executing <$> getState
   a <- ifToken
   b <- parenLeftToken
-  c <- expression
+  cond <- expression
   d <- parenRightToken
+  when (cond == Booleano False) $
+    updateState (\st -> st { executing = False })
   e <- bracketLeftToken
   f <- stmts
   g <- bracketRightToken
+  updateState (\st -> st { executing = exec })
   return [a]
   -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
@@ -1239,22 +1305,28 @@ print_procedure = do
   c <- expression <|> return (Str "")
   d <- parenRightToken
   e <- semiColonToken
-  liftIO $ putStrLn $ print_type c
+  exec <- executing <$> getState
+  when exec $ liftIO $ putStrLn $ type_to_string c
   return [a]
 
-print_type :: Type -> String
-print_type (Inteiro x) = show x
-print_type (Flutuante x) = show x
-print_type (Str x) = show x
-print_type (Booleano x) = show x
-print_type p = show p
+type_to_string :: Type -> String
+type_to_string (Inteiro x) = show x
+type_to_string (Flutuante x) = show x
+type_to_string (Str x) = x
+type_to_string (Booleano True) = "true"
+type_to_string (Booleano False) = "false"
+type_to_string p = show p
 
-scan_function :: ParsecT [Token] MemoryState IO [Token]
+scan_function :: ParsecT [Token] MemoryState IO Type
 scan_function = do
   a <- scanToken
   b <- parenLeftToken
   c <- parenRightToken
-  return ([a] ++ [b] ++ [c])
+  exec <- executing <$> getState
+  n <- if exec
+        then liftIO (readLn :: IO Int)
+        else return 0
+  return $ Inteiro n
 
 all_escapes_stmts :: ParsecT [Token] MemoryState IO [Token]
 all_escapes_stmts = do
@@ -1336,4 +1408,4 @@ main = do
   result <- parser tokens
   case result of
     Left err -> print err
-    Right ans -> return ()
+    Right ans -> print ans

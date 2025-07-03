@@ -2,6 +2,7 @@
 module Lexer where
 
 import System.IO
+import Text.Read (readMaybe)
 }
 
 %wrapper "posn"
@@ -80,7 +81,7 @@ tokens :-
   $digit+\.$digit+                     { \p s -> Float (read s) (getLC p) }
   $digit+                              { \p s -> Int (read s) (getLC p) }
   \_? [$alpha] [$alpha $digit \_]*     { \p s -> Id s (getLC p) }
-  \"[$char \\.]*\"                     { \p s -> String (read s) (getLC p) }
+  \"($char|\\.)*\"                     { \p s -> String (read s) (getLC p) }
 {
 -- Each action has type :: String -> Token
 
