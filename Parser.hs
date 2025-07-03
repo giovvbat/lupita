@@ -502,7 +502,7 @@ variable_declaration = do
   b <- typeToken
   -- b <- all_possible_type_tokens
   c <- semiColonToken
-  symtable_insert(a, get_default_value b)
+  updateState (symtable_insert(a, get_default_value b))
   return ([a] ++ [b] ++ [c])
   -- return ([a] ++ b ++ [c])
 
@@ -670,7 +670,7 @@ assign =
     b <- all_assign_tokens
     c <- intToken
     d <- semiColonToken
-    symtable_update (a, c)
+    updateState (symtable_update (a, c))
     return ([a] ++ [b] ++ [c] ++ [d])
   )
   <|>
@@ -1143,36 +1143,19 @@ get_default_value (Type "string" p) = String "" p
 get_default_value (Type "float" p) = Float 0.0 p
 get_default_value (Type "bool" p) = Bool False p
 
-symtable_insert :: (Token, Token) -> ParsecT [Token] MemoryState IO ()
-symtable_insert symbol@(Id current_name (line, column), _) = do
-  st <- getState
-  let current_table = symtable st
-      declared_names = [name | (Id name _, _) <- current_table]
-  if current_name `elem` declared_names
-    then fail $ "variable \"" ++ current_name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
-    else putState $ st { symtable = current_table ++ [symbol] }
+symtable_insert :: (Token, Token) -> MemoryState -> MemoryState
+symtable_insert symbol@(Id current_name (line, column), _) st@(MemoryState current_table)= do
+    let declared_names = [name | (Id name _, _) <- current_table]
+    if current_name `elem` declared_names
+    then error $ "variable \"" ++ current_name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
+    else st { symtable = current_table ++ [symbol] }
 
-symtable_update :: (Token, Token) -> ParsecT [Token] MemoryState IO ()
-symtable_update (Id name (line, column), new_value) = do
-  st <- getState
-  let current_table = symtable st
-    -- função auxiliar para atualizar lista por nome, ignorando posição
-      update [] = Nothing
-      update ((Id current_name current_position, current_value) : t)
-        | name == current_name = Just ((Id current_name current_position, new_value) : t)
-        | otherwise = do
-            rest <- update t
-            Just ((Id current_name current_position, current_value) : rest)
-  case update current_table of
-    Nothing -> fail $ "variable \"" ++ name ++ "\" not found: line " ++ show line ++ " column " ++ show column
-    Just new_symtable -> putState $ st { symtable = new_symtable }
-
--- symtable_update :: (Token, Token) -> MemoryState -> MemoryState
--- symtable_update _ = fail "variable not found"
--- symtable_update (id1, v1) ((id2, v2) : t) =
---   if id1 == id2
---     then (id1, v1) : t
---     else (id2, v2) : symtable_update (id1, v1) t
+symtable_update :: (Token, Token) -> MemoryState -> MemoryState
+symtable_update (Id id (line, column), _) (MemoryState []) = error $ "variable \"" ++ id ++ "\" not found: line " ++ show line ++ " column " ++ show column
+symtable_update (Id id1 p1, v1) st@(MemoryState ((Id id2 p2, v2) : t)) =
+  if id1 == id2
+    then st {symtable = (Id id1 p2, v1) : t}
+    else st {symtable = (Id id2 p2, v2) : symtable (symtable_update (Id id1 p1, v1) st {symtable = t})}
 
 -- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
 -- symtable_remove _ [] = fail "variable not found"
