@@ -32,7 +32,7 @@ import Text.Parsec
 
 type SymbolTable = [(String, Type)]
 
-data Type = Inteiro Int | Flutuante Float | Str String | Booleano Bool | Registro String [(String, Type)]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)]
     deriving (Show, Eq)
 
 data MemoryState = MemoryState {
@@ -490,7 +490,7 @@ struct = do
     d <- user_defined_types_declarations
     e <- bracketRightToken
     let Id b_name _ = b in do
-        updateState (typetable_insert $ Registro b_name d)
+        updateState (typetable_insert $ Record b_name d)
         return ([a] ++ [b] ++ [c] ++ [e])
 
 enum :: ParsecT [Token] MemoryState IO [Token]
@@ -817,7 +817,7 @@ factor =
   -- <|> try access_chain
   <|> do
     a <- idToken
-    get_variable a <$> getState
+    get_variable_value a <$> getState
   <|> try numeric_literal_tokens
   <|> try boolean_tokens
   <|>
@@ -834,7 +834,7 @@ or_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 or_op = do
   op <- orToken;
   return (\a b -> case (a, b) of
-      (Booleano x, Booleano y) -> Booleano (x || y)
+      (Boolean x, Boolean y) -> Boolean (x || y)
       (_, _) -> error "tipo inesperado"
     )
 
@@ -842,7 +842,7 @@ and_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 and_op = do
   op <- andToken;
   return (\a b -> case (a, b) of
-      (Booleano x, Booleano y) -> Booleano (x && y)
+      (Boolean x, Boolean y) -> Boolean (x && y)
       (_, _) -> error "tipo inesperado"
     )
 
@@ -857,20 +857,20 @@ equal_different_op = (do
     )
 
 do_equal_op :: Type -> Type -> Type
-do_equal_op (Inteiro a) (Inteiro b) = Booleano $ a == b
-do_equal_op (Flutuante a) (Flutuante b) = Booleano $ a == b
-do_equal_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a == b
-do_equal_op (Flutuante a) (Inteiro b) = Booleano $ a == fromIntegral b
-do_equal_op (Str a) (Str b) = Booleano $ a == b
-do_equal_op (Booleano a) (Booleano b) = Booleano $ a == b
+do_equal_op (Integer a) (Integer b) = Boolean $ a == b
+do_equal_op (Floating a) (Floating b) = Boolean $ a == b
+do_equal_op (Integer a) (Floating b) = Boolean $ fromIntegral a == b
+do_equal_op (Floating a) (Integer b) = Boolean $ a == fromIntegral b
+do_equal_op (Str a) (Str b) = Boolean $ a == b
+do_equal_op (Boolean a) (Boolean b) = Boolean $ a == b
 
 do_different_op :: Type -> Type -> Type
-do_different_op (Inteiro a) (Inteiro b) = Booleano $ a /= b
-do_different_op (Flutuante a) (Flutuante b) = Booleano $ a /= b
-do_different_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a /= b
-do_different_op (Flutuante a) (Inteiro b) = Booleano $ a /= fromIntegral b
-do_different_op (Str a) (Str b) = Booleano $ a /= b
-do_different_op (Booleano a) (Booleano b) = Booleano $ a /= b
+do_different_op (Integer a) (Integer b) = Boolean $ a /= b
+do_different_op (Floating a) (Floating b) = Boolean $ a /= b
+do_different_op (Integer a) (Floating b) = Boolean $ fromIntegral a /= b
+do_different_op (Floating a) (Integer b) = Boolean $ a /= fromIntegral b
+do_different_op (Str a) (Str b) = Boolean $ a /= b
+do_different_op (Boolean a) (Boolean b) = Boolean $ a /= b
 
 greater_lesser_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 greater_lesser_op = (do
@@ -891,28 +891,28 @@ greater_lesser_op = (do
     )
 
 do_greater_op :: Type -> Type -> Type
-do_greater_op (Inteiro a) (Inteiro b) = Booleano $ a > b
-do_greater_op (Flutuante a) (Flutuante b) = Booleano $ a > b
-do_greater_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a > b
-do_greater_op (Flutuante a) (Inteiro b) = Booleano $ a > fromIntegral b
+do_greater_op (Integer a) (Integer b) = Boolean $ a > b
+do_greater_op (Floating a) (Floating b) = Boolean $ a > b
+do_greater_op (Integer a) (Floating b) = Boolean $ fromIntegral a > b
+do_greater_op (Floating a) (Integer b) = Boolean $ a > fromIntegral b
 
 do_greater_eq_op :: Type -> Type -> Type
-do_greater_eq_op (Inteiro a) (Inteiro b) = Booleano $ a >= b
-do_greater_eq_op (Flutuante a) (Flutuante b) = Booleano $ a >= b
-do_greater_eq_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a >= b
-do_greater_eq_op (Flutuante a) (Inteiro b) = Booleano $ a >= fromIntegral b
+do_greater_eq_op (Integer a) (Integer b) = Boolean $ a >= b
+do_greater_eq_op (Floating a) (Floating b) = Boolean $ a >= b
+do_greater_eq_op (Integer a) (Floating b) = Boolean $ fromIntegral a >= b
+do_greater_eq_op (Floating a) (Integer b) = Boolean $ a >= fromIntegral b
 
 do_less_op :: Type -> Type -> Type
-do_less_op (Inteiro a) (Inteiro b) = Booleano $ a < b
-do_less_op (Flutuante a) (Flutuante b) = Booleano $ a < b
-do_less_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a < b
-do_less_op (Flutuante a) (Inteiro b) = Booleano $ a < fromIntegral b
+do_less_op (Integer a) (Integer b) = Boolean $ a < b
+do_less_op (Floating a) (Floating b) = Boolean $ a < b
+do_less_op (Integer a) (Floating b) = Boolean $ fromIntegral a < b
+do_less_op (Floating a) (Integer b) = Boolean $ a < fromIntegral b
 
 do_less_eq_op :: Type -> Type -> Type
-do_less_eq_op (Inteiro a) (Inteiro b) = Booleano $ a <= b
-do_less_eq_op (Flutuante a) (Flutuante b) = Booleano $ a <= b
-do_less_eq_op (Inteiro a) (Flutuante b) = Booleano $ fromIntegral a <= b
-do_less_eq_op (Flutuante a) (Inteiro b) = Booleano $ a <= fromIntegral b
+do_less_eq_op (Integer a) (Integer b) = Boolean $ a <= b
+do_less_eq_op (Floating a) (Floating b) = Boolean $ a <= b
+do_less_eq_op (Integer a) (Floating b) = Boolean $ fromIntegral a <= b
+do_less_eq_op (Floating a) (Integer b) = Boolean $ a <= fromIntegral b
 
 add_sub_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 add_sub_op =
@@ -927,20 +927,20 @@ add_sub_op =
   )
 
 do_add_op :: Type -> Type -> Type
-do_add_op (Inteiro a) (Inteiro b) = Inteiro $ a + b
-do_add_op (Flutuante a) (Inteiro b) = Flutuante $ a + fromIntegral b
-do_add_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a + b
-do_add_op (Flutuante a) (Flutuante b) = Flutuante $ a + b
+do_add_op (Integer a) (Integer b) = Integer $ a + b
+do_add_op (Floating a) (Integer b) = Floating $ a + fromIntegral b
+do_add_op (Integer a) (Floating b) = Floating $ fromIntegral a + b
+do_add_op (Floating a) (Floating b) = Floating $ a + b
 do_add_op (Str a) (Str b) = Str $ a ++ b
 do_add_op (Str a) b = Str $ a ++ type_to_string b
 do_add_op a (Str b) = Str $ type_to_string a ++ b
 do_add_op _ _ = error "tipo inesperado"
 
 do_sub_op :: Type -> Type -> Type
-do_sub_op (Inteiro a) (Inteiro b) = Inteiro $ a - b
-do_sub_op (Flutuante a) (Inteiro b) = Flutuante $ a - fromIntegral b
-do_sub_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a - b
-do_sub_op (Flutuante a) (Flutuante b) = Flutuante $ a - b
+do_sub_op (Integer a) (Integer b) = Integer $ a - b
+do_sub_op (Floating a) (Integer b) = Floating $ a - fromIntegral b
+do_sub_op (Integer a) (Floating b) = Floating $ fromIntegral a - b
+do_sub_op (Floating a) (Floating b) = Floating $ a - b
 do_sub_op _ _ = error "tipo inesperado"
 
 mul_div_rem_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
@@ -961,19 +961,19 @@ mul_div_rem_op =
   )
 
 do_mul_op :: Type -> Type -> Type
-do_mul_op (Inteiro a) (Inteiro b) = Inteiro $ a * b
-do_mul_op (Flutuante a) (Inteiro b) = Flutuante $ a * fromIntegral b
-do_mul_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a * b
-do_mul_op (Flutuante a) (Flutuante b) = Flutuante $ a * b
+do_mul_op (Integer a) (Integer b) = Integer $ a * b
+do_mul_op (Floating a) (Integer b) = Floating $ a * fromIntegral b
+do_mul_op (Integer a) (Floating b) = Floating $ fromIntegral a * b
+do_mul_op (Floating a) (Floating b) = Floating $ a * b
 
 do_div_op :: Type -> Type -> Type
-do_div_op (Inteiro a) (Inteiro b) = Inteiro $ a `div` b
-do_div_op (Flutuante a) (Inteiro b) = Flutuante $ a / fromIntegral b
-do_div_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a / b
-do_div_op (Flutuante a) (Flutuante b) = Flutuante $ a / b
+do_div_op (Integer a) (Integer b) = Integer $ a `div` b
+do_div_op (Floating a) (Integer b) = Floating $ a / fromIntegral b
+do_div_op (Integer a) (Floating b) = Floating $ fromIntegral a / b
+do_div_op (Floating a) (Floating b) = Floating $ a / b
 
 do_rem_op :: Type -> Type -> Type
-do_rem_op (Inteiro a) (Inteiro b) = Inteiro $ a `mod` b
+do_rem_op (Integer a) (Integer b) = Integer $ a `mod` b
 
 pow_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 pow_op = do
@@ -981,10 +981,10 @@ pow_op = do
   return do_pow_op
 
 do_pow_op :: Type -> Type -> Type
-do_pow_op (Inteiro a) (Inteiro b) = Inteiro $ a ^ b
-do_pow_op (Flutuante a) (Inteiro b) = Flutuante $ a ** fromIntegral b
-do_pow_op (Inteiro a) (Flutuante b) = Flutuante $ fromIntegral a ** b
-do_pow_op (Flutuante a) (Flutuante b) = Flutuante $ a ** b
+do_pow_op (Integer a) (Integer b) = Integer $ a ^ b
+do_pow_op (Floating a) (Integer b) = Floating $ a ** fromIntegral b
+do_pow_op (Integer a) (Floating b) = Floating $ fromIntegral a ** b
+do_pow_op (Floating a) (Floating b) = Floating $ a ** b
 
 -- operador unário
 unary_ops :: ParsecT [Token] MemoryState IO (Type -> Type)
@@ -1000,11 +1000,11 @@ unary_ops =
     )
 
 do_neg_op :: Type -> Type
-do_neg_op (Inteiro a) = Inteiro $ -a
-do_neg_op (Flutuante a) = Flutuante $ -a
+do_neg_op (Integer a) = Integer $ -a
+do_neg_op (Floating a) = Floating $ -a
 
 do_not_op :: Type -> Type
-do_not_op (Booleano a) = Booleano $ not a
+do_not_op (Boolean a) = Boolean $ not a
 
 prioritary_comparison_ops :: ParsecT [Token] MemoryState IO Token
 prioritary_comparison_ops =
@@ -1175,7 +1175,7 @@ cond_if = do
   b <- parenLeftToken
   cond <- expression
   d <- parenRightToken
-  when (cond == Booleano False) $
+  when (cond == Boolean False) $
     updateState (\st -> st { executing = False })
   e <- bracketLeftToken
   f <- stmts
@@ -1271,13 +1271,13 @@ default_case = do
 numeric_literal_tokens :: ParsecT [Token] MemoryState IO Type
 numeric_literal_tokens = do
   a <- try intToken <|> try floatToken
-  get_type a <$> getState
+  get_type_value a <$> getState
 
 all_possible_type_tokens :: ParsecT [Token] MemoryState IO Type
 all_possible_type_tokens =
   try (do
     a <- try idToken <|> try typeToken
-    get_type a <$> getState
+    get_type_value a <$> getState
   )
   -- <|>
   -- try (do
@@ -1291,12 +1291,13 @@ all_possible_type_tokens =
 string_tokens :: ParsecT [Token] MemoryState IO Type
 string_tokens = do
   a <- stringToken
-  get_type a <$> getState
+  s <- getState
+  return (get_type_value a s)
 
 boolean_tokens :: ParsecT [Token] MemoryState IO Type
 boolean_tokens = do
   a <- boolToken
-  get_type a <$> getState
+  get_type_value a <$> getState
 
 print_procedure :: ParsecT [Token] MemoryState IO [Token]
 print_procedure = do
@@ -1310,11 +1311,11 @@ print_procedure = do
   return [a]
 
 type_to_string :: Type -> String
-type_to_string (Inteiro x) = show x
-type_to_string (Flutuante x) = show x
+type_to_string (Integer x) = show x
+type_to_string (Floating x) = show x
 type_to_string (Str x) = x
-type_to_string (Booleano True) = "true"
-type_to_string (Booleano False) = "false"
+type_to_string (Boolean True) = "true"
+type_to_string (Boolean False) = "false"
 type_to_string p = show p
 
 scan_function :: ParsecT [Token] MemoryState IO Type
@@ -1326,7 +1327,7 @@ scan_function = do
   n <- if exec
         then liftIO (readLn :: IO Int)
         else return 0
-  return $ Inteiro n
+  return $ Integer n
 
 all_escapes_stmts :: ParsecT [Token] MemoryState IO [Token]
 all_escapes_stmts = do
@@ -1336,19 +1337,19 @@ all_escapes_stmts = do
 
 -- funções para a tabela de símbolos
 
-get_type :: Token -> MemoryState -> Type
-get_type (Type "int" _) _ = Inteiro 0
-get_type (Type "string" _) _ = Str ""
-get_type (Type "float" _) _ = Flutuante 0.0
-get_type (Type "bool" _) _ = Booleano False
-get_type (Int x _) _ = Inteiro x
-get_type (String x _) _ = Str x
-get_type (Float x _) _ = Flutuante x
-get_type (Bool x _) _ = Booleano x
-get_type token@(Id x _) (MemoryState _ table _) = lookup_type token table
+get_type_value :: Token -> MemoryState -> Type
+get_type_value (Type "int" _) _ = Integer 0
+get_type_value (Type "string" _) _ = Str ""
+get_type_value (Type "float" _) _ = Floating 0.0
+get_type_value (Type "bool" _) _ = Boolean False
+get_type_value (Int x _) _ = Integer x
+get_type_value (String x _) _ = Str x
+get_type_value (Float x _) _ = Floating x
+get_type_value (Bool x _) _ = Boolean x
+get_type_value token@(Id x _) (MemoryState _ table _) = lookup_type token table
 
-get_variable :: Token -> MemoryState -> Type
-get_variable token@(Id x _) (MemoryState table _ _) = lookup_variable token table
+get_variable_value :: Token -> MemoryState -> Type
+get_variable_value token@(Id x _) (MemoryState table _ _) = lookup_variable token table
 
 lookup_variable :: Token -> [(String, Type)] -> Type
 lookup_variable (Id name (line, column)) [] = error $ "undefined variable \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
@@ -1358,12 +1359,12 @@ lookup_variable token@(Id name _) ((name2, typ) : rest)
 
 lookup_type :: Token -> [Type] -> Type
 lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
-lookup_type token@(Id name _) (t@(Registro name2 _) : rest)
+lookup_type token@(Id name _) (t@(Record name2 _) : rest)
     | name == name2 = t
     | otherwise = lookup_type token rest
 
 typetable_insert :: Type -> MemoryState -> MemoryState
-typetable_insert t@(Registro current_name fields) st@(MemoryState _ table _) = do
+typetable_insert t@(Record current_name fields) st@(MemoryState _ table _) = do
     st {typetable = table ++ [t]}
 
 symtable_insert :: (Token, Type) -> MemoryState -> MemoryState
@@ -1408,4 +1409,4 @@ main = do
   result <- parser tokens
   case result of
     Left err -> print err
-    Right ans -> print ans
+    Right ans -> return ()

@@ -4,9 +4,9 @@ procedure main() {
     c int;
     res float;
 
-    x = 5.0;
-    y = 2.5;
-    c = 3;
+    x = 2;
+    y = 3.5;
+    c = 1;
 
     res = x ^ 2 - y + c;
 
