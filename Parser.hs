@@ -2,6 +2,8 @@
 
 {-# HLINT ignore "Use camelCase" #-}
 {-# HLINT ignore "Use newtype instead of data" #-}
+{-# HLINT ignore "Redundant lambda" #-}
+{-# HLINT ignore "Use lambda-case" #-}
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
@@ -11,6 +13,7 @@ import GHC.Float (divideDouble)
 import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
+import Data.Char (toLower)
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -431,8 +434,8 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  print_symtable
-  print_types
+  -- print_symtable
+  -- print_types
   eof
   return ()
 
@@ -693,32 +696,93 @@ stmt =
   <|> try const_declarations
   <|> try data_structures_declarations
   <|> try function_return
-  <|> try function_return
 
-all_assign_tokens :: ParsecT [Token] MemoryState IO Token
+all_assign_tokens :: ParsecT [Token] MemoryState IO (Token -> Type -> MemoryState -> Either String Type)
 all_assign_tokens =
-  try addAssignToken
-  <|> try subAssignToken
-  <|> try mulAssignToken
-  <|> try divAssignToken
-  <|> try remAssignToken
-  <|> try powAssignToken
-  <|> try assignToken
+  try (do
+    Assign pos@(line, col) <- assignToken
+    return (assign_eq (line, col))
+  )
+  <|>
+  try (do
+    AddAssign pos@(line, col) <- addAssignToken
+    return (assign_add (line, col))
+  )
+  <|>
+  try (do
+    SubAssign pos@(line, col) <- subAssignToken
+    return (assign_sub (line, col))
+  )
+  <|>
+  try (do
+    MulAssign pos@(line, col) <- mulAssignToken
+    return (assign_mul (line, col))
+  )
+  <|>
+  try (do
+    DivAssign pos@(line, col) <- divAssignToken
+    return (assign_div (line, col))
+  )
+  <|>
+  try (do
+    RemAssign pos@(line, col) <- remAssignToken
+    return (assign_rem (line, col))
+  )
+  <|>
+  try (do
+    PowAssign pos@(line, col) <- powAssignToken
+    return (assign_pow (line, col))
+  )
+
+assign_eq :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_eq = assign_with_op (\_ _ expr -> expr)
+
+assign_add :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_add = assign_with_op do_number_add_op
+
+assign_sub :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_sub = assign_with_op do_sub_op
+
+assign_mul :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_mul = assign_with_op do_mul_op
+
+assign_div :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_div = assign_with_op do_div_op
+
+assign_rem :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_rem = assign_with_op do_rem_op
+
+assign_pow :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_pow = assign_with_op do_pow_op
+
+assign_with_op :: ((Int, Int) -> (Type -> Type -> Type)) -> (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
+assign_with_op op (line, column) variable_name expression state =
+  let
+    (Id name _) = variable_name
+    variable_type = get_variable_value variable_name state
+    base_variable_type = extract_base_type variable_type
+    base_expr_type = extract_base_type expression
+    result = op (line, column) variable_type expression
+  in
+    if compare_type_base base_variable_type base_expr_type then
+      Right result
+    else
+      Left $ "type error: variable " ++ show name ++ " expects type " ++ show_pretty_types base_variable_type ++
+             ", but got " ++ show_pretty_type_values result ++
+             "; line: " ++ show line ++ ", column: " ++ show column
 
 assign :: ParsecT [Token] MemoryState IO [Token]
-assign =
-  try (do
-    -- a <- access_chain
-    a <- idToken
-    b <- all_assign_tokens
-    c <- expression
-    d <- semiColonToken
-    s <- getState
-    when (executing s) $
-        updateState (symtable_update (a, c))
-    return [a]
-    -- return ([a] ++ [b] ++ [c] ++ [d])
-  )
+assign = try $ do
+  a <- idToken
+  assign_function <- all_assign_tokens
+  b <- expression
+  c <- semiColonToken
+  s <- getState
+  when (executing s) $ do
+    case assign_function a b s of
+      Right new_value -> updateState (symtable_update (a, new_value))
+      Left error_msg    -> fail error_msg
+  return [a]
   <|>
   try (do
     a <- idToken
@@ -832,179 +896,219 @@ factor =
 -- operadores binários
 or_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 or_op = do
-  op <- orToken;
+  Or (line, col) <- orToken
   return (\a b -> case (a, b) of
       (Boolean x, Boolean y) -> Boolean (x || y)
-      (_, _) -> error "tipo inesperado"
+      (x, y) -> error $ binary_type_error "or" x y (line, col)
     )
 
 and_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 and_op = do
-  op <- andToken;
+  And (line, col) <- andToken;
   return (\a b -> case (a, b) of
       (Boolean x, Boolean y) -> Boolean (x && y)
-      (_, _) -> error "tipo inesperado"
+      (x, y) -> error $ binary_type_error "and" x y (line, col)
     )
 
 equal_different_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
-equal_different_op = (do
-        op <- equalToken
-        return do_equal_op
-    ) <|>
-    (do
-        op <- notEqualToken
-        return do_different_op
-    )
+equal_different_op =
+  (do
+    Equal (line, col) <- equalToken
+    return (do_equal_op (line, col))
+  )
+  <|>
+  (do
+    NotEqual (line, col) <- notEqualToken
+    return (do_different_op (line, col))
+  )
 
-do_equal_op :: Type -> Type -> Type
-do_equal_op (Integer a) (Integer b) = Boolean $ a == b
-do_equal_op (Floating a) (Floating b) = Boolean $ a == b
-do_equal_op (Integer a) (Floating b) = Boolean $ fromIntegral a == b
-do_equal_op (Floating a) (Integer b) = Boolean $ a == fromIntegral b
-do_equal_op (Str a) (Str b) = Boolean $ a == b
-do_equal_op (Boolean a) (Boolean b) = Boolean $ a == b
+do_equal_op :: (Int, Int) -> (Type -> Type -> Type)
+do_equal_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x == y
+  (Floating x, Floating y) -> Boolean $ x == y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x == y
+  (Floating x, Integer y)  -> Boolean $ x == fromIntegral y
+  (Str x, Str y)           -> Boolean $ x == y
+  (Boolean x, Boolean y)   -> Boolean $ x == y
+  (x, y) -> error $ binary_type_error "==" x y (line, col)
 
-do_different_op :: Type -> Type -> Type
-do_different_op (Integer a) (Integer b) = Boolean $ a /= b
-do_different_op (Floating a) (Floating b) = Boolean $ a /= b
-do_different_op (Integer a) (Floating b) = Boolean $ fromIntegral a /= b
-do_different_op (Floating a) (Integer b) = Boolean $ a /= fromIntegral b
-do_different_op (Str a) (Str b) = Boolean $ a /= b
-do_different_op (Boolean a) (Boolean b) = Boolean $ a /= b
+do_different_op :: (Int, Int) -> (Type -> Type -> Type)
+do_different_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x /= y
+  (Floating x, Floating y) -> Boolean $ x /= y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x /= y
+  (Floating x, Integer y)  -> Boolean $ x /= fromIntegral y
+  (Str x, Str y)           -> Boolean $ x /= y
+  (Boolean x, Boolean y)   -> Boolean $ x /= y
+  (x, y) -> error $ binary_type_error "!=" x y (line, col)
 
 greater_lesser_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
-greater_lesser_op = (do
-        op <- greaterToken
-        return do_greater_op
-    ) <|>
-    (do
-        op <- greaterEqToken
-        return do_greater_eq_op
-    ) <|>
-    (do
-        op <- lessToken
-        return do_less_op
-    ) <|>
-    (do
-        op <- lessEqToken
-        return do_less_eq_op
-    )
+greater_lesser_op =
+  (do
+    Greater (line, col) <- greaterToken
+    return (do_greater_op (line, col))
+  )
+  <|>
+  (do
+    GreaterEq (line, col) <- greaterEqToken
+    return (do_greater_eq_op (line, col))
+  )
+  <|>
+  (do
+    Less (line, col) <- lessToken
+    return (do_less_op (line, col))
+  )
+  <|>
+  (do
+    LessEq (line, col) <- lessEqToken
+    return (do_less_eq_op (line, col))
+  )
 
-do_greater_op :: Type -> Type -> Type
-do_greater_op (Integer a) (Integer b) = Boolean $ a > b
-do_greater_op (Floating a) (Floating b) = Boolean $ a > b
-do_greater_op (Integer a) (Floating b) = Boolean $ fromIntegral a > b
-do_greater_op (Floating a) (Integer b) = Boolean $ a > fromIntegral b
+do_greater_op :: (Int, Int) -> (Type -> Type -> Type)
+do_greater_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x > y
+  (Floating x, Floating y) -> Boolean $ x > y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x > y
+  (Floating x, Integer y)  -> Boolean $ x > fromIntegral y
+  (x, y) -> error $ binary_type_error ">" x y (line, col)
 
-do_greater_eq_op :: Type -> Type -> Type
-do_greater_eq_op (Integer a) (Integer b) = Boolean $ a >= b
-do_greater_eq_op (Floating a) (Floating b) = Boolean $ a >= b
-do_greater_eq_op (Integer a) (Floating b) = Boolean $ fromIntegral a >= b
-do_greater_eq_op (Floating a) (Integer b) = Boolean $ a >= fromIntegral b
+do_greater_eq_op :: (Int, Int) -> (Type -> Type -> Type)
+do_greater_eq_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x >= y
+  (Floating x, Floating y) -> Boolean $ x >= y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x >= y
+  (Floating x, Integer y)  -> Boolean $ x >= fromIntegral y
+  (x, y) -> error $ binary_type_error ">=" x y (line, col)
 
-do_less_op :: Type -> Type -> Type
-do_less_op (Integer a) (Integer b) = Boolean $ a < b
-do_less_op (Floating a) (Floating b) = Boolean $ a < b
-do_less_op (Integer a) (Floating b) = Boolean $ fromIntegral a < b
-do_less_op (Floating a) (Integer b) = Boolean $ a < fromIntegral b
+do_less_op :: (Int, Int) -> (Type -> Type -> Type)
+do_less_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x < y
+  (Floating x, Floating y) -> Boolean $ x < y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x < y
+  (Floating x, Integer y)  -> Boolean $ x < fromIntegral y
+  (x, y)-> error $ binary_type_error "<" x y (line, col)
 
-do_less_eq_op :: Type -> Type -> Type
-do_less_eq_op (Integer a) (Integer b) = Boolean $ a <= b
-do_less_eq_op (Floating a) (Floating b) = Boolean $ a <= b
-do_less_eq_op (Integer a) (Floating b) = Boolean $ fromIntegral a <= b
-do_less_eq_op (Floating a) (Integer b) = Boolean $ a <= fromIntegral b
+do_less_eq_op :: (Int, Int) -> (Type -> Type -> Type)
+do_less_eq_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y)   -> Boolean $ x <= y
+  (Floating x, Floating y) -> Boolean $ x <= y
+  (Integer x, Floating y)  -> Boolean $ fromIntegral x <= y
+  (Floating x, Integer y)  -> Boolean $ x <= fromIntegral y
+  (x, y) -> error $ binary_type_error "<=" x y (line, col)
 
 add_sub_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 add_sub_op =
   (do
-    op <- addToken;
-    return do_add_op
+    Add (line, col) <- addToken
+    return (do_add_op (line, col))
   )
   <|>
   (do
-    op <- subToken;
-    return do_sub_op
+    Sub (line, col) <- subToken
+    return (do_sub_op (line, col))
   )
 
-do_add_op :: Type -> Type -> Type
-do_add_op (Integer a) (Integer b) = Integer $ a + b
-do_add_op (Floating a) (Integer b) = Floating $ a + fromIntegral b
-do_add_op (Integer a) (Floating b) = Floating $ fromIntegral a + b
-do_add_op (Floating a) (Floating b) = Floating $ a + b
-do_add_op (Str a) (Str b) = Str $ a ++ b
-do_add_op (Str a) b = Str $ a ++ type_to_string b
-do_add_op a (Str b) = Str $ type_to_string a ++ b
-do_add_op _ _ = error "tipo inesperado"
+do_add_op :: (Int, Int) -> (Type -> Type -> Type)
+do_add_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x + y
+  (Floating x, Integer y) -> Floating $ x + fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x + y
+  (Floating x, Floating y) -> Floating $ x + y
+  (Str x, Str y) -> Str $ x ++ y
+  (Str x, y) -> Str $ x ++ type_to_string y
+  (x, Str y) -> Str $ type_to_string x ++ y
+  (x, y) -> error $ binary_type_error "+" x y (line, col)
 
-do_sub_op :: Type -> Type -> Type
-do_sub_op (Integer a) (Integer b) = Integer $ a - b
-do_sub_op (Floating a) (Integer b) = Floating $ a - fromIntegral b
-do_sub_op (Integer a) (Floating b) = Floating $ fromIntegral a - b
-do_sub_op (Floating a) (Floating b) = Floating $ a - b
-do_sub_op _ _ = error "tipo inesperado"
+do_number_add_op :: (Int, Int) -> (Type -> Type -> Type)
+do_number_add_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x + y
+  (Floating x, Integer y) -> Floating $ x + fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x + y
+  (Floating x, Floating y) -> Floating $ x + y
+  (x, y) -> error $ binary_type_error "+" x y (line, col)
+
+do_sub_op :: (Int, Int) -> (Type -> Type -> Type)
+do_sub_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x - y
+  (Floating x, Integer y) -> Floating $ x - fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x - y
+  (Floating x, Floating y) -> Floating $ x - y
+  (x, y) -> error $ binary_type_error "-" x y (line, col)
 
 mul_div_rem_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 mul_div_rem_op =
   (do
-    op <- mulToken;
-    return do_mul_op
+    Mul (line, col) <- mulToken;
+    return (do_mul_op (line, col))
   )
   <|>
   (do
-    op <- divToken;
-    return do_div_op
+    Div (line, col) <- divToken;
+    return (do_div_op (line, col))
   )
   <|>
   (do
-    op <- remToken;
-    return do_rem_op
+    Rem (line, col) <- remToken;
+    return (do_rem_op (line, col))
   )
 
-do_mul_op :: Type -> Type -> Type
-do_mul_op (Integer a) (Integer b) = Integer $ a * b
-do_mul_op (Floating a) (Integer b) = Floating $ a * fromIntegral b
-do_mul_op (Integer a) (Floating b) = Floating $ fromIntegral a * b
-do_mul_op (Floating a) (Floating b) = Floating $ a * b
+do_mul_op :: (Int, Int) -> (Type -> Type -> Type)
+do_mul_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x * y
+  (Floating x, Integer y) -> Floating $ x * fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x * y
+  (Floating x, Floating y) -> Floating $ x * y
+  (x, y) -> error $ binary_type_error "*" x y (line, col)
 
-do_div_op :: Type -> Type -> Type
-do_div_op (Integer a) (Integer b) = Integer $ a `div` b
-do_div_op (Floating a) (Integer b) = Floating $ a / fromIntegral b
-do_div_op (Integer a) (Floating b) = Floating $ fromIntegral a / b
-do_div_op (Floating a) (Floating b) = Floating $ a / b
+do_div_op :: (Int, Int) -> (Type -> Type -> Type)
+do_div_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x `div` y
+  (Floating x, Integer y) -> Floating $ x / fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x / y
+  (Floating x, Floating y) -> Floating $ x / y
+  (x, y) -> error $ binary_type_error "/" x y (line, col)
 
-do_rem_op :: Type -> Type -> Type
-do_rem_op (Integer a) (Integer b) = Integer $ a `mod` b
+do_rem_op :: (Int, Int) -> (Type -> Type -> Type)
+do_rem_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x `mod` y
+  (x, y) -> error $ binary_type_error "%" x y (line, col)
 
 pow_op :: ParsecT [Token] MemoryState IO (Type -> Type -> Type)
 pow_op = do
-  op <- powToken
-  return do_pow_op
+  Pow (line, col) <- powToken
+  return (do_pow_op (line, col))
 
-do_pow_op :: Type -> Type -> Type
-do_pow_op (Integer a) (Integer b) = Integer $ a ^ b
-do_pow_op (Floating a) (Integer b) = Floating $ a ** fromIntegral b
-do_pow_op (Integer a) (Floating b) = Floating $ fromIntegral a ** b
-do_pow_op (Floating a) (Floating b) = Floating $ a ** b
+do_pow_op :: (Int, Int) -> (Type -> Type -> Type)
+do_pow_op (line, col) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x ^ y
+  (Floating x, Integer y) -> Floating $ x ** fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x ** y
+  (Floating x, Floating y) -> Floating $ x ** y
+  (x, y) -> error $ binary_type_error "^" x y (line, col)
 
 -- operador unário
 unary_ops :: ParsecT [Token] MemoryState IO (Type -> Type)
 unary_ops =
-    (do
-    op <- subToken;
-    return do_neg_op
-    )
+  (do
+    Sub (line, col) <- subToken;
+    return (do_neg_op (line, col))
+  )
     <|>
-    (do
-    op <- notToken;
-    return do_not_op
-    )
+  (do
+    Not (line, col) <- notToken;
+    return (do_not_op (line, col))
+  )
 
-do_neg_op :: Type -> Type
-do_neg_op (Integer a) = Integer $ -a
-do_neg_op (Floating a) = Floating $ -a
+do_neg_op :: (Int, Int) -> (Type -> Type)
+do_neg_op (line, col) = \t -> case t of
+  Integer a  -> Integer (-a)
+  Floating a -> Floating (-a)
+  a          -> error $ unary_type_error "-" a (line, col)
 
-do_not_op :: Type -> Type
-do_not_op (Boolean a) = Boolean $ not a
+do_not_op :: (Int, Int) -> (Type -> Type)
+do_not_op (line, col) = \t -> case t of
+  Boolean a -> Boolean (not a)
+  a         -> error $ unary_type_error "not" a (line, col)
 
 prioritary_comparison_ops :: ParsecT [Token] MemoryState IO Token
 prioritary_comparison_ops =
@@ -1015,8 +1119,7 @@ prioritary_comparison_ops =
 
 non_prioritary_comparison_ops :: ParsecT [Token] MemoryState IO Token
 non_prioritary_comparison_ops =
-  try prioritary_comparison_ops
-  <|> try equalToken
+  try equalToken
   <|> try notEqualToken
 
 all_comparison_ops :: ParsecT [Token] MemoryState IO Token
@@ -1291,8 +1394,7 @@ all_possible_type_tokens =
 string_tokens :: ParsecT [Token] MemoryState IO Type
 string_tokens = do
   a <- stringToken
-  s <- getState
-  return (get_type_value a s)
+  get_type_value a <$> getState
 
 boolean_tokens :: ParsecT [Token] MemoryState IO Type
 boolean_tokens = do
@@ -1388,6 +1490,52 @@ symtable_update (Id id1 p1, v1) st@(MemoryState ((id2, v2) : t) _ _) =
 --     then t
 --     else (id2, v2) : symtable_remove (id1, v1) t
 
+compare_type_base :: Type -> Type -> Bool
+compare_type_base first_type second_type = case (first_type, second_type) of
+  (Integer _, Integer _)     -> True
+  (Floating _, Floating _)   -> True
+  (Str _, Str _)             -> True
+  (Boolean _, Boolean _)     -> True
+  (Record first_record _, Record second_record _) -> first_record == second_record
+  _                          -> False
+
+extract_base_type :: Type -> Type
+extract_base_type t = case t of
+  Integer _ -> Integer 0
+  Floating _ -> Floating 0.0
+  Str _ -> Str ""
+  Boolean _ -> Boolean False
+  Record name _ -> Record name []
+
+--- funções para auxiliar na impressão de mensagens de erro
+
+show_pretty_types :: Type -> String
+show_pretty_types t = case t of
+  Integer _ -> "int"
+  Floating _ -> "float"
+  Str _ -> "string"
+  Boolean _ -> "bool"
+  Record name _ -> show name
+
+show_pretty_type_values :: Type -> String
+show_pretty_type_values t = case t of
+  Integer x -> "int (" ++ show x ++ ")"
+  Floating x -> "float (" ++ show x ++ ")"
+  Str x -> "string (" ++ show x ++ ")"
+  Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
+  Record name x -> show name ++ show x ++ ")"
+
+binary_type_error :: String -> Type -> Type -> (Int, Int) -> a
+binary_type_error op_name first_type second_type (line, column) =
+  error $ "type error in \"" ++ op_name ++ "\": unexpected parameter types " ++
+  show_pretty_type_values first_type ++ " and " ++ show_pretty_type_values second_type ++
+  "; line: " ++ show line ++ ", column: " ++ show column
+
+unary_type_error :: String -> Type -> (Int, Int) -> a
+unary_type_error op_name t (line, column) =
+  error $ "type error in \"" ++ op_name ++ "\": unexpected parameter type " ++
+  show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
+
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do
   st <- getState
@@ -1396,7 +1544,7 @@ print_symtable = do
 print_types :: ParsecT [Token] MemoryState IO ()
 print_types = do
   st <- getState
-  liftIO $ putStrLn ("types: " ++ show (typetable st) ++ "\n")
+  liftIO $ putStrLn ("user defined types: " ++ show (typetable st) ++ "\n")
 
 -- invocação do parser para o símbolo de partida
 

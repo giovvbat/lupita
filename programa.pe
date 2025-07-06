@@ -1,14 +1,11 @@
 procedure main() {
-    x float;
-    y float;
-    c int;
-    res float;
+    flag int;
 
-    x = 2;
-    y = 3.5;
-    c = 1;
+    flag = 1 + 2;
 
-    res = x ^ 2 - y + c;
+    print(flag);
 
-    print(res);
+    flag = 1000;
+
+    print(flag);
 }
