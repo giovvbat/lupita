@@ -1314,75 +1314,83 @@ cond_else if_cond =
 
 match_case :: ParsecT [Token] MemoryState IO [Token]
 match_case = do
+  exec <- executing <$> getState
   a <- matchToken
   b <- parenLeftToken
-  c <- expression
+  expr <- expression
   d <- parenRightToken
   e <- bracketLeftToken
-  f <- cases
+  f <- cases expr
   h <- bracketRightToken
   return [a]
   -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [h])
 
-cases :: ParsecT [Token] MemoryState IO [Token]
-cases =
-  try default_case
+cases :: Type -> ParsecT [Token] MemoryState IO Bool
+cases expr =
+  try $ default_case False
   <|>
   try (do
-    a <- single_case
-    b <- remaining_cases
-    return (a ++ b)
+    matched_first <- single_case expr False
+    remaining_cases expr matched_first
   )
 
-remaining_cases :: ParsecT [Token] MemoryState IO [Token]
-remaining_cases =
-  try default_case
+remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO Bool
+remaining_cases expr matched =
+  try $ default_case matched
   <|>
   try (do
-    a <- single_case
-    b <- remaining_cases
-    return (a ++ b)
+    matched_current <- single_case expr matched
+    remaining_cases expr matched_current
   )
-  <|> return []
+  <|> return matched
 
-single_case :: ParsecT [Token] MemoryState IO [Token]
-single_case = do
+single_case :: Type -> Bool -> ParsecT [Token] MemoryState IO Bool
+single_case expr matched = do
+  exec <- executing <$> getState
   a <- caseToken
-  b <- case_expression
+  cond <- case_expression expr
   c <- colonToken
+  when (not cond || matched) $
+    updateState (\st -> st { executing = False });
   d <- stmts
-  return ([a] ++ b ++ [c] ++ d)
+  updateState (\st -> st { executing = exec })
+  return (cond || matched)
 
-case_expression :: ParsecT [Token] MemoryState IO [Token]
-case_expression =
-  -- try expression
-  -- <|>
+case_expression :: Type -> ParsecT [Token] MemoryState IO Bool
+case_expression expr =
+  try (do
+      e <- expression
+      return $ e == expr
+  )
+  <|>
   try (do
     a <- parenLeftToken
-    b <- expression
-    c <- remaining_case_expression
+    e <- expression
+    rest <- remaining_case_expression expr
     d <- parenRightToken
-    return [a]
-    -- return ([a] ++ b ++ c ++ [d])
+    return $ (e == expr) || rest
   )
 
-remaining_case_expression :: ParsecT [Token] MemoryState IO [Token]
-remaining_case_expression =
+remaining_case_expression :: Type -> ParsecT [Token] MemoryState IO Bool
+remaining_case_expression expr =
   try (do
     a <- commaToken
-    b <- expression
-    c <- remaining_case_expression
-    return [a]
-    -- return ([a] ++ b ++ c)
+    e <- expression
+    rest <- remaining_case_expression expr
+    return $ (e == expr) || rest
   )
-  <|> return []
+  <|> return False
 
-default_case :: ParsecT [Token] MemoryState IO [Token]
-default_case = do
+default_case :: Bool -> ParsecT [Token] MemoryState IO Bool
+default_case matched = do
+    exec <- executing <$> getState
     a <- defaultToken
     b <- colonToken
+    when matched $
+        updateState (\st -> st { executing = False })
     c <- stmts
-    return ([a] ++ [b] ++ c)
+    updateState (\st -> st { executing = exec })
+    return True
 
 numeric_literal_tokens :: ParsecT [Token] MemoryState IO Type
 numeric_literal_tokens = do
@@ -1557,7 +1565,7 @@ unary_type_error op_name t (line, column) =
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
 variable_type_error_msg :: String -> Type -> Type -> (Int, Int) -> String
-variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: variable " ++ show variable_name 
+variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: variable " ++ show variable_name
   ++ " expects type " ++ show_pretty_types expected_type ++
   ", but got " ++ show_pretty_type_values provided_type ++
   "; line: " ++ show line ++ ", column: " ++ show column
