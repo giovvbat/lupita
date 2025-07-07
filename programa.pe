@@ -1,11 +1,13 @@
 procedure main() {
-    flag int;
+    flag int = 2;
 
-    flag = 1 + 2;
+    example string = "oi";
 
-    print(flag);
+    print("flag values: " + flag);
 
-    flag = 1000;
+    //flag int = 5;
 
-    print(flag);
+    example = "oi" + 5;
+
+    print(example);
 }

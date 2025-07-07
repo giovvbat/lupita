@@ -35,7 +35,7 @@ import Data.Char (toLower)
 
 type SymbolTable = [(String, Type)]
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
     deriving (Show, Eq)
 
 data MemoryState = MemoryState {
@@ -434,8 +434,8 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  -- print_symtable
-  -- print_types
+  print_symtable
+  print_types
   eof
   return ()
 
@@ -449,8 +449,7 @@ initial_declarations =
   <|>
   try (do
     a <- variable_declarations
-    b <- initial_declarations
-    return b
+    initial_declarations
     -- return (a ++ b)
   )
   <|> try (do
@@ -503,8 +502,9 @@ enum = do
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
-    return ([a] ++ [b] ++ [c] ++ [e])
-    -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
+    let Id b_name _ = b in do
+        updateState (typetable_insert $ Enumeration b_name d)
+        return ([a] ++ [b] ++ [c] ++ [e])
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
@@ -524,13 +524,12 @@ remaining_user_defined_types_declarations =
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declarations =
   try variable_declaration
-  -- <|> try variable_declaration_assignment
+  <|> try variable_declaration_assignment
   -- <|> try variable_guess_declaration_assignment
 
 variable_declaration :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declaration = do
   a <- idToken
-  -- b <- typeToken
   b <- all_possible_type_tokens
   c <- semiColonToken
   s <- getState
@@ -540,15 +539,24 @@ variable_declaration = do
     return (a_name, b)
   -- return ([a] ++ b ++ [c])
 
-variable_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
+variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declaration_assignment = do
-  a <- idToken
+  a@(Id name (line, col)) <- idToken
   b <- typeToken
   c <- assignToken
   d <- expression
   e <- semiColonToken
-  return [a]
-  -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
+  s <- getState
+  let declared_type = get_type_value b s
+  let expr_base_type = extract_base_type d
+  let declared_base_type = extract_base_type declared_type
+  if declared_base_type == expr_base_type
+    then do
+      when (executing s) $
+        updateState (symtable_insert (a, d))
+      return (name, d)
+    else
+      fail $ variable_type_error_msg name declared_type d (line, col)
 
 variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
 variable_guess_declaration_assignment = do
@@ -767,9 +775,7 @@ assign_with_op op (line, column) variable_name expression state =
     if compare_type_base base_variable_type base_expr_type then
       Right result
     else
-      Left $ "type error: variable " ++ show name ++ " expects type " ++ show_pretty_types base_variable_type ++
-             ", but got " ++ show_pretty_type_values result ++
-             "; line: " ++ show line ++ ", column: " ++ show column
+      Left $ variable_type_error_msg name base_variable_type result (line, column)
 
 assign :: ParsecT [Token] MemoryState IO [Token]
 assign = try $ do
@@ -1224,7 +1230,7 @@ for_variable_initialization =
     b <- semiColonToken
     return (a ++ [b])
   )
-  <|> try variable_declaration_assignment
+  -- <|> try variable_declaration_assignment
 
 for_condition :: ParsecT [Token] MemoryState IO [Token]
 for_condition =
@@ -1460,14 +1466,17 @@ lookup_variable token@(Id name _) ((name2, typ) : rest)
     | otherwise = lookup_variable token rest
 
 lookup_type :: Token -> [Type] -> Type
-lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
-lookup_type token@(Id name _) (t@(Record name2 _) : rest)
-    | name == name2 = t
-    | otherwise = lookup_type token rest
+lookup_type (Id name (line, column)) [] =
+  error $ "undefined type \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
+lookup_type token@(Id name _) (t : rest) = case t of
+  Record name2 _ | name == name2 -> t
+  Enumeration  name2 _ | name == name2 -> t
+  _ -> lookup_type token rest
 
 typetable_insert :: Type -> MemoryState -> MemoryState
-typetable_insert t@(Record current_name fields) st@(MemoryState _ table _) = do
-    st {typetable = table ++ [t]}
+typetable_insert t@(Record _ _) st@(MemoryState _ table _) = st {typetable = table ++ [t]}
+typetable_insert t@(Enumeration  _ _) st@(MemoryState _ table _) = st {typetable = table ++ [t]}
+typetable_insert _ st = st  -- caso padrão, ignora outros tipos
 
 symtable_insert :: (Token, Type) -> MemoryState -> MemoryState
 symtable_insert (Id name (line, column), typ) st@(MemoryState current_table _ _)= do
@@ -1497,6 +1506,7 @@ compare_type_base first_type second_type = case (first_type, second_type) of
   (Str _, Str _)             -> True
   (Boolean _, Boolean _)     -> True
   (Record first_record _, Record second_record _) -> first_record == second_record
+  (Enumeration first_enumeration _, Enumeration second_enumeration _) -> first_enumeration == second_enumeration
   _                          -> False
 
 extract_base_type :: Type -> Type
@@ -1506,6 +1516,7 @@ extract_base_type t = case t of
   Str _ -> Str ""
   Boolean _ -> Boolean False
   Record name _ -> Record name []
+  Enumeration name _ -> Record name []
 
 --- funções para auxiliar na impressão de mensagens de erro
 
@@ -1516,6 +1527,7 @@ show_pretty_types t = case t of
   Str _ -> "string"
   Boolean _ -> "bool"
   Record name _ -> show name
+  Enumeration name _ -> show name
 
 show_pretty_type_values :: Type -> String
 show_pretty_type_values t = case t of
@@ -1524,6 +1536,7 @@ show_pretty_type_values t = case t of
   Str x -> "string (" ++ show x ++ ")"
   Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
   Record name x -> show name ++ show x ++ ")"
+  Enumeration name x -> show name ++ show x ++ ")"
 
 binary_type_error :: String -> Type -> Type -> (Int, Int) -> a
 binary_type_error op_name first_type second_type (line, column) =
@@ -1536,15 +1549,21 @@ unary_type_error op_name t (line, column) =
   error $ "type error in \"" ++ op_name ++ "\": unexpected parameter type " ++
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
+variable_type_error_msg :: String -> Type -> Type -> (Int, Int) -> String
+variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: variable " ++ show variable_name 
+  ++ " expects type " ++ show_pretty_types expected_type ++
+  ", but got " ++ show_pretty_type_values provided_type ++
+  "; line: " ++ show line ++ ", column: " ++ show column
+
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do
   st <- getState
-  liftIO $ putStrLn ("symtable: " ++ show (symtable st) ++ "\n")
+  liftIO $ putStrLn ("\nsymtable: " ++ show (symtable st))
 
 print_types :: ParsecT [Token] MemoryState IO ()
 print_types = do
   st <- getState
-  liftIO $ putStrLn ("user defined types: " ++ show (typetable st) ++ "\n")
+  liftIO $ putStrLn ("user defined types: " ++ show (typetable st))
 
 -- invocação do parser para o símbolo de partida
 
