@@ -1,5 +1,5 @@
 struct Pessoa {
-    nome string;
+    nome string = "exemplo de inconstante";
 }
 
 struct Pessoa2 {
@@ -7,7 +7,7 @@ struct Pessoa2 {
 }
 
 procedure main() {
-    p int = 4;
-
-    flag guess = "true";
+    q Pessoa;
+    p const Pessoa = q;
+    print(p);
 }

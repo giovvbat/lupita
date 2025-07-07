@@ -26,16 +26,17 @@ import Data.Char (toLower)
 -- lista de tipos criados por usuário
 --
 -- tabela de subprogramas declarados
--- nome, parametros, tipo de retorno e codigo
+-- nome, parametros, tipo de retorno e código
 -- data SubP = Proc ... | Func ...
 --
 -- flag se está executando
 -- falsa se está em declaração de subprograma
 -- verdadeira quando entra na main
 
-type SymbolTable = [(String, Type)]
+-- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
+type SymbolTable = [(String, Type, Bool)]
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type, Bool)] | Enumeration String [(String, Type, Bool)]
     deriving (Show, Eq)
 
 data MemoryState = MemoryState {
@@ -418,12 +419,6 @@ breakToken = tokenPrim show update_pos get_token
     get_token (Break p) = Just (Break p)
     get_token _ = Nothing
 
-nullToken :: ParsecT [Token] st IO Token
-nullToken = tokenPrim show update_pos get_token
-  where
-    get_token (Null p) = Just (Null p)
-    get_token _ = Nothing
-
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -434,8 +429,8 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  print_symtable
-  print_types
+  -- print_symtable
+  -- print_types
   eof
   return ()
 
@@ -450,12 +445,10 @@ initial_declarations =
   try (do
     a <- variable_declarations
     initial_declarations
-    -- return (a ++ b)
   )
   <|> try (do
     a <- const_declarations
-    b <- initial_declarations
-    return (a ++ b)
+    initial_declarations
   )
   <|> try (do
     a <- data_structures_declarations
@@ -506,40 +499,40 @@ enum = do
         updateState (typetable_insert $ Enumeration b_name d)
         return ([a] ++ [b] ++ [c] ++ [e])
 
-user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
+user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
 user_defined_types_declarations = do
-  first <- try variable_declarations -- <|> try const_declarations
+  first <- try variable_declarations <|> try const_declarations
   next <- remaining_user_defined_types_declarations
   return (first : next)
 
-remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
+remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
 remaining_user_defined_types_declarations =
   (do
-    first <- try variable_declarations -- <|> try const_declarations
+    first <- try variable_declarations <|> try const_declarations
     rest <- remaining_user_defined_types_declarations
     return (first : rest)
   )
   <|> return []
 
-variable_declarations :: ParsecT [Token] MemoryState IO (String, Type)
+variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
   try variable_declaration
   <|> try variable_declaration_assignment
   <|> try variable_guess_declaration_assignment
 
-variable_declaration :: ParsecT [Token] MemoryState IO (String, Type)
+variable_declaration :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declaration = do
   a <- idToken
   b <- all_possible_type_tokens
   c <- semiColonToken
   s <- getState
   when (executing s) $
-    updateState (symtable_insert (a, b))
+    updateState (symtable_insert (a, b, True))
   let Id a_name _ = a in
-    return (a_name, b)
+    return (a_name, b, True)
   -- return ([a] ++ b ++ [c])
 
-variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
+variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declaration_assignment = do
   a@(Id name (line, col)) <- idToken
   b <- all_possible_type_tokens
@@ -552,12 +545,12 @@ variable_declaration_assignment = do
   if declared_base_type == expr_base_type
     then do
       when (executing s) $
-        updateState (symtable_insert (a, d))
-      return (name, d)
+        updateState (symtable_insert (a, d, True))
+      return (name, d, True)
     else
       fail $ variable_type_error_msg name b d (line, col)
 
-variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
+variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_guess_declaration_assignment = do
   a@(Id name _) <- idToken
   b <- guessToken
@@ -566,36 +559,47 @@ variable_guess_declaration_assignment = do
   e <- semiColonToken
   s <- getState
   when (executing s) $
-    updateState (symtable_insert (a, d))
+    updateState (symtable_insert (a, d, True))
   let Id name _ = a 
-    in return (name, d)
+    in return (name, d, True)
 
-const_declarations :: ParsecT [Token] MemoryState IO [Token]
+const_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_declarations =
   try const_declaration_assignment
   <|> try const_guess_declaration_assignment
 
-const_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
+const_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_declaration_assignment = do
-  a <- idToken
+  a@(Id name (line, col)) <- idToken
   b <- constToken
-  c <- typeToken
+  c <- all_possible_type_tokens
   d <- assignToken
   e <- expression
   f <- semiColonToken
-  return [a]
-  -- return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
+  s <- getState
+  let expr_base_type = extract_base_type e
+  let declared_base_type = extract_base_type c
+  if declared_base_type == expr_base_type
+    then do
+      when (executing s) $
+        updateState (symtable_insert (a, e, False))
+      return (name, e, False)
+    else
+      fail $ variable_type_error_msg name c e (line, col)
 
-const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
+const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_guess_declaration_assignment = do
-  a <- idToken
+  a@(Id name _) <- idToken
   b <- constToken
   c <- guessToken
   d <- assignToken
   e <- expression
   f <- semiColonToken
-  return [a]
-  -- return ([a] ++ [b] ++ [c] ++ [d] ++ e ++ [f])
+  s <- getState
+  when (executing s) $
+    updateState (symtable_insert (a, e, False))
+  let Id name _ = a 
+    in return (name, e, False)
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
@@ -688,12 +692,22 @@ stmt =
   try loop
   <|> try all_escapes_stmts
   <|> try conditional
-  <|> try procedure_call
-  <|> try assign
-  <|> do
-    try variable_declarations
+  <|>
+  try (do
+    procedure_call
     return []
-  <|> try const_declarations
+  )
+  <|> try assign
+  <|> 
+  try (do
+    variable_declarations
+    return []
+  )
+  <|> 
+  try (do
+    const_declarations
+    return []
+  )
   <|> try data_structures_declarations
   <|> try function_return
 
@@ -792,7 +806,7 @@ assign = try $ do
     -- return ([a] ++ [b] ++ c ++ [d])
   )
 
-procedure_call :: ParsecT [Token] MemoryState IO [Token]
+procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
   try (do
     a <- idToken
@@ -800,10 +814,13 @@ procedure_call =
     c <- expressions <|> return []
     d <- parenRightToken
     e <- semiColonToken
-    return [a]
-    -- return ([a, b] ++ c ++ [d] ++ [e])
+    return ()
   )
-  <|> try print_procedure
+  <|> 
+  try (do
+    a <- print_procedure
+    return ()
+  )
 
 function_return :: ParsecT [Token] MemoryState IO [Token]
 function_return = do
@@ -873,7 +890,6 @@ unary_expression =
 -- fatores: unidades atômicas da expressão
 factor :: ParsecT [Token] MemoryState IO Type
 factor =
-  -- fmap (:[]) nullToken
   try string_tokens
   <|> try function_call
   -- <|> try access_chain
@@ -1422,7 +1438,7 @@ boolean_tokens = do
   a <- boolToken
   get_type_value a <$> getState
 
-print_procedure :: ParsecT [Token] MemoryState IO [Token]
+print_procedure :: ParsecT [Token] MemoryState IO ()
 print_procedure = do
   a <- printToken
   b <- parenLeftToken
@@ -1431,7 +1447,6 @@ print_procedure = do
   e <- semiColonToken
   exec <- executing <$> getState
   when exec $ liftIO $ putStrLn $ type_to_string c
-  return [a]
 
 type_to_string :: Type -> String
 type_to_string (Integer x) = show x
@@ -1474,11 +1489,12 @@ get_type_value token@(Id x _) (MemoryState _ table _) = lookup_type token table
 get_variable_value :: Token -> MemoryState -> Type
 get_variable_value token@(Id x _) (MemoryState table _ _) = lookup_variable token table
 
-lookup_variable :: Token -> [(String, Type)] -> Type
-lookup_variable (Id name (line, column)) [] = error $ "undefined variable \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
-lookup_variable token@(Id name _) ((name2, typ) : rest)
-    | name == name2 = typ
-    | otherwise = lookup_variable token rest
+lookup_variable :: Token -> SymbolTable -> Type
+lookup_variable (Id name (line, column)) [] =
+  error $ "undefined variable \"" ++ name ++ "\" in scope: line " ++ show line ++ " column " ++ show column
+lookup_variable token@(Id name _) ((name2, typ, _) : rest)
+  | name == name2 = typ
+  | otherwise     = lookup_variable token rest
 
 lookup_type :: Token -> [Type] -> Type
 lookup_type (Id name (line, column)) [] =
@@ -1493,19 +1509,26 @@ typetable_insert t@(Record _ _) st@(MemoryState _ table _) = st {typetable = tab
 typetable_insert t@(Enumeration  _ _) st@(MemoryState _ table _) = st {typetable = table ++ [t]}
 typetable_insert _ st = st  -- caso padrão, ignora outros tipos
 
-symtable_insert :: (Token, Type) -> MemoryState -> MemoryState
-symtable_insert (Id name (line, column), typ) st@(MemoryState current_table _ _)= do
-    let declared_names = [name | (name, _) <- current_table] in
+symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
+symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _) = do
+    let declared_names = [name | (name, _, _) <- current_table] in
         if name `elem` declared_names
-        then error $ "variable \"" ++ name ++ "\" already declared: line " ++ show line ++ " column " ++ show column
-        else st { symtable = current_table ++ [(name, typ)] }
+        then error $ "variable \"" ++ name ++ "\" already declared in scope: line " ++ show line ++ " column " ++ show column
+        else st { symtable = current_table ++ [(name, typ, is_variable)] }
 
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
-symtable_update (Id id (line, column), _) (MemoryState [] _ _) = error $ "variable \"" ++ id ++ "\" not found: line " ++ show line ++ " column " ++ show column
-symtable_update (Id id1 p1, v1) st@(MemoryState ((id2, v2) : t) _ _) =
-  if id1 == id2
-    then st {symtable = (id1, v1) : t}
-    else st {symtable = (id2, v2) : symtable (symtable_update (Id id1 p1, v1) st {symtable = t})}
+symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
+  error $ "variable \"" ++ id_name ++ "\" not found in scope: line " ++ show line ++ " column " ++ show column
+symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table executing) =
+  if id_name == name
+    then
+      if not is_variable
+        then error $ "cannot assign to constant \"" ++ id_name ++ "\": line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+        else st { symtable = (id_name, new_value, is_variable) : rest }
+    else
+      let MemoryState updated_symtable updated_type_table updated_executing =
+            symtable_update (Id id_name pos, new_value) (MemoryState rest type_table executing)
+      in MemoryState ((name, old_value, is_variable) : updated_symtable) updated_type_table updated_executing
 
 -- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
 -- symtable_remove _ [] = fail "variable not found"

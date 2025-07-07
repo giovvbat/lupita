@@ -64,7 +64,6 @@ tokens :-
   "%"                                  { \p s -> Rem (getLC p) }
   "^"                                  { \p s -> Pow (getLC p) }
   =                                    { \p s -> Assign (getLC p) }
-  null                                 { \p s -> Null (getLC p) }
   return                               { \p s -> Return (getLC p) }
   break                                { \p s -> Break (getLC p) }
   continue                             { \p s -> Continue (getLC p) }
@@ -131,7 +130,6 @@ data Token =
   Case  (Int, Int) |
   Default  (Int, Int) |
   For  (Int, Int) |
-  Null (Int, Int) |
   While  (Int, Int) |
   Repeat  (Int, Int) |
   Until  (Int, Int) |
