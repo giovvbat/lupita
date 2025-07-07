@@ -1,13 +1,14 @@
 procedure main() {
-    flag int = 2;
+    n int = -10;
+    //n = scan();
 
-    example string = "oi";
-
-    print("flag values: " + flag);
-
-    //flag int = 5;
-
-    example = "oi" + 5;
-
-    print(example);
+    if (n < 0) {
+        print(n + " is negative");
+    } else {
+        if (n > 0) {
+            print(n + " is positive");
+        } else {
+            print(n + " is zero");
+        }
+    }
 }
