@@ -1,14 +1,13 @@
-procedure main() {
-    n int = -10;
-    //n = scan();
+struct Pessoa {
+    nome string;
+}
 
-    if (n < 0) {
-        print(n + " is negative");
-    } else {
-        if (n > 0) {
-            print(n + " is positive");
-        } else {
-            print(n + " is zero");
-        }
-    }
+struct Pessoa2 {
+    nome string;
+}
+
+procedure main() {
+    p int = 4;
+
+    flag guess = "true";
 }

@@ -525,7 +525,7 @@ variable_declarations :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declarations =
   try variable_declaration
   <|> try variable_declaration_assignment
-  -- <|> try variable_guess_declaration_assignment
+  <|> try variable_guess_declaration_assignment
 
 variable_declaration :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declaration = do
@@ -542,46 +542,38 @@ variable_declaration = do
 variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
 variable_declaration_assignment = do
   a@(Id name (line, col)) <- idToken
-  b <- typeToken
+  b <- all_possible_type_tokens
   c <- assignToken
   d <- expression
   e <- semiColonToken
   s <- getState
-  let declared_type = get_type_value b s
   let expr_base_type = extract_base_type d
-  let declared_base_type = extract_base_type declared_type
+  let declared_base_type = extract_base_type b
   if declared_base_type == expr_base_type
     then do
       when (executing s) $
         updateState (symtable_insert (a, d))
       return (name, d)
     else
-      fail $ variable_type_error_msg name declared_type d (line, col)
+      fail $ variable_type_error_msg name b d (line, col)
 
-variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
+variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
 variable_guess_declaration_assignment = do
-  a <- idToken
+  a@(Id name _) <- idToken
   b <- guessToken
   c <- assignToken
   d <- expression
   e <- semiColonToken
-  --- updateState (symtable_insert (b, get_default_value c))
-  return [a]
-  -- return ([a] ++ [b] ++ [c] ++ d ++ [e])
+  s <- getState
+  when (executing s) $
+    updateState (symtable_insert (a, d))
+  let Id name _ = a 
+    in return (name, d)
 
 const_declarations :: ParsecT [Token] MemoryState IO [Token]
 const_declarations =
-  try const_declaration
-  <|> try const_declaration_assignment
+  try const_declaration_assignment
   <|> try const_guess_declaration_assignment
-
-const_declaration :: ParsecT [Token] MemoryState IO [Token]
-const_declaration = do
-  a <- idToken
-  b <- constToken
-  c <- typeToken
-  d <- semiColonToken
-  return ([a] ++ [b] ++ [c] ++ [d])
 
 const_declaration_assignment :: ParsecT [Token] MemoryState IO [Token]
 const_declaration_assignment = do
@@ -1550,8 +1542,8 @@ show_pretty_type_values t = case t of
   Floating x -> "float (" ++ show x ++ ")"
   Str x -> "string (" ++ show x ++ ")"
   Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
-  Record name x -> show name ++ show x ++ ")"
-  Enumeration name x -> show name ++ show x ++ ")"
+  Record name x -> show name ++ " (" ++ show x ++ ")"
+  Enumeration name x -> show name ++ " (" ++ show x ++ ")"
 
 binary_type_error :: String -> Type -> Type -> (Int, Int) -> a
 binary_type_error op_name first_type second_type (line, column) =
