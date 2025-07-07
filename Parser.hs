@@ -14,6 +14,7 @@ import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
 import Data.Char (toLower)
+import Distribution.Compat.Prelude (unless)
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -1267,33 +1268,48 @@ conditional = if_else <|> match_case
 
 if_else :: ParsecT [Token] MemoryState IO [Token]
 if_else = do
-  first <- cond_if
-  next <- cond_else
+  (first, cond) <- cond_if
+  next <- cond_else cond
   return (first ++ next)
 
-cond_if :: ParsecT [Token] MemoryState IO [Token]
+cond_if :: ParsecT [Token] MemoryState IO ([Token], Bool)
 cond_if = do
   exec <- executing <$> getState
   a <- ifToken
-  b <- parenLeftToken
+  b@(ParenLeft (line, column)) <- parenLeftToken
   cond <- expression
   d <- parenRightToken
-  when (cond == Boolean False) $
-    updateState (\st -> st { executing = False })
+  let result = check_condition "if" (line, column) cond
+  condBool <- case result of
+    Left err -> fail err
+    Right cond -> do
+        unless cond $ updateState (\st -> st { executing = False })
+        return cond
   e <- bracketLeftToken
   f <- stmts
   g <- bracketRightToken
   updateState (\st -> st { executing = exec })
-  return [a]
+  return ([a], condBool)
   -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
-cond_else :: ParsecT [Token] MemoryState IO [Token]
-cond_else =
+check_condition :: String -> (Int, Int) -> Type  -> Either String Bool
+check_condition _ _ (Boolean True) = Right True
+check_condition _ _ (Boolean False) = Right False
+check_condition conditional_name (line, column) t =
+    Left $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
+    show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
+
+cond_else :: Bool -> ParsecT [Token] MemoryState IO [Token]
+cond_else if_cond =
   (do
+    exec <- executing <$> getState
     a <- elseToken
     b <- bracketLeftToken
+    when if_cond $
+        updateState (\st -> st { executing = False })
     c <- stmts
     d <- bracketRightToken
+    updateState (\st -> st { executing = exec })
     return ([a] ++ [b] ++ c ++ [d])
   )
   <|>
@@ -1534,6 +1550,11 @@ binary_type_error op_name first_type second_type (line, column) =
 unary_type_error :: String -> Type -> (Int, Int) -> a
 unary_type_error op_name t (line, column) =
   error $ "type error in \"" ++ op_name ++ "\": unexpected parameter type " ++
+  show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
+
+condition_type_error :: String -> Type -> (Int, Int) -> a
+condition_type_error conditional_name t (line, column) =
+  error $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
 print_symtable :: ParsecT [Token] MemoryState IO ()
