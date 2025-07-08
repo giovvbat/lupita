@@ -15,6 +15,7 @@ import Lexer
 import Text.Parsec
 import Data.Char (toLower)
 import Data.List (nub, (\\))
+import Control.Monad.Trans.Class (lift)
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -1202,29 +1203,84 @@ loop = while <|> repeat_until <|> for
 
 while :: ParsecT [Token] MemoryState IO [Token]
 while = do
+  state <- getState
+  let exec = executing state
+
   a <- whileToken
-  b <- parenLeftToken
-  c <- expression
+  b@(ParenLeft (line, column)) <- parenLeftToken
+  inputBeforeCond <- getInput
+  cond <- expression
+  inputAfterCond <- getInput
   d <- parenRightToken
+
+  let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
+
   e <- bracketLeftToken
+  inputBefore <- getInput
+  updateState (\st -> st { executing = False })
   f <- stmts
+  updateState (\st -> st { executing = exec })
+  inputAfter <- getInput
   g <- bracketRightToken
+
+  let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
+
+  when exec $ do
+    run_loop False condTokens bodyTokens (line, column)
+
   return [a]
   -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
 repeat_until :: ParsecT [Token] MemoryState IO [Token]
 repeat_until = do
-  a <- repeatToken
-  b <- bracketLeftToken
-  c <- stmts
-  d <- bracketRightToken
-  e <- untilToken
-  f <- parenLeftToken
-  g <- expression
-  h <- parenRightToken
-  j <- semiColonToken
-  return [a]
-  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ [f] ++ g ++ [h] ++ [j])
+    exec <- executing <$> getState
+
+    a <- repeatToken
+    b <- bracketLeftToken
+    
+    inputBefore <- getInput
+    c <- stmts
+    inputAfter <- getInput
+    
+    d <- bracketRightToken
+
+    e <- untilToken
+    ParenLeft (line, column) <- parenLeftToken
+
+    inputBeforeCond <- getInput
+    cond <- expression
+    inputAfterCond <- getInput
+
+    h <- parenRightToken
+    j <- semiColonToken
+
+    let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
+    let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
+
+    when exec $ do
+        run_loop True condTokens bodyTokens (line, column)
+
+    return [a]
+
+run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> ParsecT [Token] MemoryState IO ()
+run_loop negateCondition condTokens bodyTokens (line, column) = do
+    state <- getState
+
+    condResult <- lift $ runParserT expression state "" condTokens
+    condBool <- case condResult of
+        Left parseErr -> fail (show parseErr)
+        Right condExpr -> case check_condition "while" (line, column) condExpr of
+            Left err -> fail err
+            Right boolVal -> return (if negateCondition then not boolVal else boolVal)
+
+    when condBool $ do
+        state' <- getState
+        result <- lift $ runParserTWithState stmts state' bodyTokens
+        case result of
+            Left err -> fail (show err)
+            Right (_, newState) -> do
+                putState newState
+                run_loop negateCondition condTokens bodyTokens (line, column)
 
 for :: ParsecT [Token] MemoryState IO [Token]
 for = do
@@ -1661,6 +1717,18 @@ print_types = do
   st <- getState
   liftIO $ putStrLn ("user defined types: " ++ show (typetable st))
 
+runParserTWithState
+    :: ParsecT [Token] MemoryState IO a
+    -> MemoryState
+    -> [Token]
+    -> IO (Either ParseError (a, MemoryState))
+runParserTWithState parser initialState tokens = do
+    runParserT (do
+        a <- parser
+        s <- getState
+        return (a, s)
+        ) initialState "" tokens
+        
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())

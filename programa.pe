@@ -1,22 +1,35 @@
-struct Pessoa {
-    nome string = "exemplo";
-    idade int = 21;
-    idadee int;
-}
-
-enum Pessoa2 {
-    p Pessoa;
-    s float;
-    w float;
-    q int;
-}
-
 procedure main() {
-    p Pessoa;
-    q guess = p;
-    s float = 1+2.0;
+    interval1 int;
+    interval2 int;
+    interval3 int;
+    interval4 int;
+    
+    x int;
 
-    print(p);
+    repeat {
+        x = scan();
+
+        if (x >= 0 && x <= 25) {
+            interval1 += 1;
+        }
+
+        if (x >= 26 && x <= 50) {
+            interval2 += 1;
+        }
+
+        if (x >= 51 && x <= 75) {
+            interval3 += 1;
+        }
+
+        if (x >= 76 && x <= 100) {
+            interval4 += 1;
+        }
+    } until (x < 0);
+
+    print("Intervalo [0, 25]: " + interval1 + " números");
+    print("Intervalo [26, 50]: " + interval2 + " números");
+    print("Intervalo [51, 75]: " + interval3 + " números");
+    print("Intervalo [76, 100]: " + interval4 + " números");
 }
 
 // access_chain precisa retornar tipo e nome
