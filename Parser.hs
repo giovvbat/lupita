@@ -589,7 +589,7 @@ const_declaration_assignment = do
           updateState (symtable_insert (a, e, False))
         return (name, e, False)
         else
-          fail $ const_guess_declaration_assignment_error_msg e (line, col)
+          fail $ const_guess_declaration_assignment_error_msg (line, col)
     else
       fail $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
 
@@ -609,7 +609,7 @@ const_guess_declaration_assignment = do
     let Id name _ = a 
       in return (name, e, False)
     else
-      fail $ const_guess_declaration_assignment_error_msg e (line, col)
+      fail $ const_guess_declaration_assignment_error_msg (line, col)
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
@@ -1703,9 +1703,8 @@ condition_type_error conditional_name t (line, column) =
   error $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
-const_guess_declaration_assignment_error_msg :: Type -> (Int, Int) -> String
-const_guess_declaration_assignment_error_msg provided_type (line, column) = "constants are unassignable to type " ++
-  show_pretty_type_values provided_type ++ "; line: " ++ show line ++ ", column: " ++ show column
+const_guess_declaration_assignment_error_msg :: (Int, Int) -> String
+const_guess_declaration_assignment_error_msg (line, column) = "constants are of no bindability to user-defined types; line: " ++ show line ++ ", column: " ++ show column
 
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do

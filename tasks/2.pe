@@ -1,0 +1,33 @@
+procedure main() {
+    fst_range int;
+    snd_range int;
+    trd_range int;
+    fth_range int;
+    number int;
+
+    repeat {
+        print("enter an integer below. in case you wanna end the program, enter a negative integer:");
+        number = scan();
+
+        if (number >= 0 && number <= 25) {
+            fst_range += 1;
+        }
+
+        if (number >= 26 && number <= 50) {
+            snd_range += 1;
+        }
+
+        if (number >= 51 && number <= 75) {
+            trd_range += 1;
+        }
+
+        if (number >= 76 && number <= 100) {
+            fth_range += 1;
+        }
+    } until (number < 0);
+
+    print("range [0, 25]: " + fst_range + " elements");
+    print("range [26, 50]: " + snd_range + " elements");
+    print("range [51, 75]: " + trd_range + " elements");
+    print("range [76, 100]: " + fth_range + " elements");
+}

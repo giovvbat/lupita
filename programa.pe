@@ -1,35 +1,26 @@
+struct Pessoa {
+    nome string = "exemplo de inconstante";
+    idade int = 21;
+    idadee int;
+}
+
+struct Pessoa2 {
+    nome string;
+}
+
+enum Pessoa3 {
+    p Pessoa;
+    s float;
+    w float;
+    q int;
+}
+
 procedure main() {
-    interval1 int;
-    interval2 int;
-    interval3 int;
-    interval4 int;
-    
-    x int;
+    q Pessoa;
+    p const Pessoa = q;
+    s guess = q;
 
-    repeat {
-        x = scan();
-
-        if (x >= 0 && x <= 25) {
-            interval1 += 1;
-        }
-
-        if (x >= 26 && x <= 50) {
-            interval2 += 1;
-        }
-
-        if (x >= 51 && x <= 75) {
-            interval3 += 1;
-        }
-
-        if (x >= 76 && x <= 100) {
-            interval4 += 1;
-        }
-    } until (x < 0);
-
-    print("Intervalo [0, 25]: " + interval1 + " números");
-    print("Intervalo [26, 50]: " + interval2 + " números");
-    print("Intervalo [51, 75]: " + interval3 + " números");
-    print("Intervalo [76, 100]: " + interval4 + " números");
+    print(p);
 }
 
 // access_chain precisa retornar tipo e nome
