@@ -14,6 +14,7 @@ import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
 import Data.Char (toLower)
+import Data.List (nub, (\\))
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -479,36 +480,36 @@ user_defined_types = enum <|> struct
 
 struct :: ParsecT [Token] MemoryState IO [Token]
 struct = do
-    a <- structToken
+    a@(Struct (line, col)) <- structToken
     b <- idToken
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
     let Id b_name _ = b in do
-        updateState (typetable_insert $ Record b_name d)
+        updateState (typetable_insert (Record b_name d) (line, col))
         return ([a] ++ [b] ++ [c] ++ [e])
 
 enum :: ParsecT [Token] MemoryState IO [Token]
 enum = do
-    a <- enumToken
+    a@(Enum (line, col)) <- enumToken
     b <- idToken
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
     let Id b_name _ = b in do
-        updateState (typetable_insert $ Enumeration b_name d)
+        updateState (typetable_insert (Enumeration b_name d) (line, col))
         return ([a] ++ [b] ++ [c] ++ [e])
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
 user_defined_types_declarations = do
-  first <- try variable_declarations <|> try const_declarations
+  first <- try variable_declarations
   next <- remaining_user_defined_types_declarations
   return (first : next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
 remaining_user_defined_types_declarations =
   (do
-    first <- try variable_declarations <|> try const_declarations
+    first <- try variable_declarations
     rest <- remaining_user_defined_types_declarations
     return (first : rest)
   )
@@ -581,25 +582,33 @@ const_declaration_assignment = do
   let declared_base_type = extract_base_type c
   if declared_base_type == expr_base_type
     then do
-      when (executing s) $
-        updateState (symtable_insert (a, e, False))
-      return (name, e, False)
+      if is_main_four_type declared_base_type
+        then do
+        when (executing s) $
+          updateState (symtable_insert (a, e, False))
+        return (name, e, False)
+        else
+          fail $ const_guess_declaration_assignment_error_msg e (line, col)
     else
-      fail $ variable_type_error_msg name c e (line, col)
+      fail $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
 
 const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_guess_declaration_assignment = do
-  a@(Id name _) <- idToken
+  a@(Id name (line, col)) <- idToken
   b <- constToken
   c <- guessToken
   d <- assignToken
   e <- expression
   f <- semiColonToken
   s <- getState
-  when (executing s) $
-    updateState (symtable_insert (a, e, False))
-  let Id name _ = a 
-    in return (name, e, False)
+  if is_main_four_type e
+    then do
+    when (executing s) $
+      updateState (symtable_insert (a, e, False))
+    let Id name _ = a 
+      in return (name, e, False)
+    else
+      fail $ const_guess_declaration_assignment_error_msg e (line, col)
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
@@ -1454,7 +1463,8 @@ type_to_string (Floating x) = show x
 type_to_string (Str x) = x
 type_to_string (Boolean True) = "true"
 type_to_string (Boolean False) = "false"
-type_to_string p = show p
+type_to_string (Record name fields) = show_fields fields
+type_to_string (Enumeration name fields) = show_fields fields
 
 scan_function :: ParsecT [Token] MemoryState IO Type
 scan_function = do
@@ -1491,39 +1501,59 @@ get_variable_value token@(Id x _) (MemoryState table _ _) = lookup_variable toke
 
 lookup_variable :: Token -> SymbolTable -> Type
 lookup_variable (Id name (line, column)) [] =
-  error $ "undefined variable \"" ++ name ++ "\" in scope: line " ++ show line ++ " column " ++ show column
+  error $ "undefined variable \"" ++ name ++ "\" in scope; line " ++ show line ++ " column " ++ show column
 lookup_variable token@(Id name _) ((name2, typ, _) : rest)
   | name == name2 = typ
   | otherwise     = lookup_variable token rest
 
 lookup_type :: Token -> [Type] -> Type
 lookup_type (Id name (line, column)) [] =
-  error $ "undefined type \"" ++ name ++ "\": line " ++ show line ++ " column " ++ show column
+  error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_type token@(Id name _) (t : rest) = case t of
   Record name2 _ | name == name2 -> t
   Enumeration  name2 _ | name == name2 -> t
   _ -> lookup_type token rest
 
-typetable_insert :: Type -> MemoryState -> MemoryState
-typetable_insert t@(Record _ _) st@(MemoryState _ table _) = st {typetable = table ++ [t]}
-typetable_insert t@(Enumeration  _ _) st@(MemoryState _ table _) = st {typetable = table ++ [t]}
-typetable_insert _ st = st  -- caso padrão, ignora outros tipos
+typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
+typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _) =
+  let
+    field_names = map (\(fname, _, _) -> fname) fields
+    duplicates = field_names \\ nub field_names
+    existing_type_names = map get_type_name table
+  in
+    if name `elem` existing_type_names
+      then error $ "type \"" ++ name ++ "\" already defined, alternative name must be provided; line " ++ show line ++ " column " ++ show column
+    else if not (null duplicates)
+      then error $ "duplicate field names in record " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
+    else st {typetable = table ++ [t]}
+typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _) =
+  let
+    label_names = map (\(label, _, _) -> label) fields
+    duplicates = label_names \\ nub label_names
+    existing_type_names = map get_type_name table
+  in
+    if name `elem` existing_type_names
+      then error $ "type \"" ++ name ++ "\" already defined, alternative name must be provided; line " ++ show line ++ " column " ++ show column
+    else if not (null duplicates)
+      then error $ "duplicate labels in enumeration " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
+    else st {typetable = table ++ [t]}
+typetable_insert _ _ st = st  -- ignora outros tipos
 
 symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
 symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _) = do
     let declared_names = [name | (name, _, _) <- current_table] in
         if name `elem` declared_names
-        then error $ "variable \"" ++ name ++ "\" already declared in scope: line " ++ show line ++ " column " ++ show column
+        then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
         else st { symtable = current_table ++ [(name, typ, is_variable)] }
 
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
-  error $ "variable \"" ++ id_name ++ "\" not found in scope: line " ++ show line ++ " column " ++ show column
+  error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
 symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table executing) =
   if id_name == name
     then
       if not is_variable
-        then error $ "cannot assign to constant \"" ++ id_name ++ "\": line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+        then error $ "cannot assign to constant \"" ++ id_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
         else st { symtable = (id_name, new_value, is_variable) : rest }
     else
       let MemoryState updated_symtable updated_type_table updated_executing =
@@ -1536,6 +1566,14 @@ symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, i
 --   if id1 == id2
 --     then t
 --     else (id2, v2) : symtable_remove (id1, v1) t
+
+is_main_four_type :: Type -> Bool
+is_main_four_type t = case t of
+  Integer _  -> True
+  Floating _ -> True
+  Str _      -> True
+  Boolean _  -> True
+  _          -> False
 
 compare_type_base :: Type -> Type -> Bool
 compare_type_base first_type second_type = case (first_type, second_type) of
@@ -1556,6 +1594,11 @@ extract_base_type t = case t of
   Record name _ -> Record name []
   Enumeration name _ -> Record name []
 
+get_type_name :: Type -> String
+get_type_name (Record name _) = name
+get_type_name (Enumeration name _) = name
+get_type_name _ = ""
+
 --- funções para auxiliar na impressão de mensagens de erro
 
 show_pretty_types :: Type -> String
@@ -1564,8 +1607,8 @@ show_pretty_types t = case t of
   Floating _ -> "float"
   Str _ -> "string"
   Boolean _ -> "bool"
-  Record name _ -> show name
-  Enumeration name _ -> show name
+  Record name _ -> name
+  Enumeration name _ -> name
 
 show_pretty_type_values :: Type -> String
 show_pretty_type_values t = case t of
@@ -1573,8 +1616,14 @@ show_pretty_type_values t = case t of
   Floating x -> "float (" ++ show x ++ ")"
   Str x -> "string (" ++ show x ++ ")"
   Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
-  Record name x -> show name ++ " (" ++ show x ++ ")"
-  Enumeration name x -> show name ++ " (" ++ show x ++ ")"
+  Record name fields -> name ++ " (" ++ show_fields fields ++ ")"
+  Enumeration name values -> name ++ " (" ++ show_fields values ++ ")"
+
+-- Função auxiliar para imprimir os campos/labels formatados
+show_fields :: [(String, Type, Bool)] -> String
+show_fields [] = ""
+show_fields [(fname, ftype, _)] = fname ++ ": " ++ show_pretty_type_values ftype
+show_fields ((fname, ftype, _) : rest) = fname ++ ": " ++ show_pretty_type_values ftype ++ ", " ++ show_fields rest
 
 binary_type_error :: String -> Type -> Type -> (Int, Int) -> a
 binary_type_error op_name first_type second_type (line, column) =
@@ -1597,6 +1646,10 @@ condition_type_error :: String -> Type -> (Int, Int) -> a
 condition_type_error conditional_name t (line, column) =
   error $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
+
+const_guess_declaration_assignment_error_msg :: Type -> (Int, Int) -> String
+const_guess_declaration_assignment_error_msg provided_type (line, column) = "constants are unassignable to type " ++
+  show_pretty_type_values provided_type ++ "; line: " ++ show line ++ ", column: " ++ show column
 
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do
