@@ -1,11 +1,12 @@
+struct Pessoa2 {
+    nome string = "oi";
+}
+
 struct Pessoa {
     nome string = "exemplo de inconstante";
     idade int = 21;
-    idadee int;
-}
-
-struct Pessoa2 {
-    nome string;
+    idadeee int;
+    p Pessoa2;
 }
 
 enum Pessoa3 {
@@ -16,11 +17,5 @@ enum Pessoa3 {
 }
 
 procedure main() {
-    q Pessoa;
-    p const Pessoa = q;
-    s guess = q;
-
-    print(p);
+    p int = 2 + 2;
 }
-
-// access_chain precisa retornar tipo e nome
