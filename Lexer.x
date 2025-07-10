@@ -36,6 +36,7 @@ tokens :-
   matrix                               { \p s -> Matrix (getLC p) }
   true                                 { \p s -> Bool True (getLC p) }
   false                                { \p s -> Bool False (getLC p) }
+  "&"                                  { \p s -> Reference (getLC p) }
   "{"                                  { \p s -> BracketLeft (getLC p) }
   "}"                                  { \p s -> BracketRight (getLC p) }
   "["                                  { \p s -> BraceLeft (getLC p) }
@@ -114,6 +115,7 @@ data Token =
   And    (Int, Int) |
   Or    (Int, Int) |
   Not    (Int, Int) |
+  Reference (Int, Int) |
   BracketLeft   (Int, Int) |
   BracketRight    (Int, Int) |
   BraceLeft    (Int, Int) |

@@ -422,6 +422,12 @@ breakToken = tokenPrim show update_pos get_token
     get_token (Break p) = Just (Break p)
     get_token _ = Nothing
 
+referenceToken :: ParsecT [Token] st IO Token
+referenceToken = tokenPrim show update_pos get_token
+  where
+    get_token (Reference p) = Just (Reference p)
+    get_token _ = Nothing
+
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -655,11 +661,21 @@ function = do
   -- return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
 
 param :: ParsecT [Token] MemoryState IO (String, Type)
-param = do
-  a <- idToken
-  b <- all_possible_type_tokens
-  let Id a_name _ = a in
-    return (a_name, b)
+param = 
+  try (do
+    a <- referenceToken
+    b <- idToken
+    c <- all_possible_type_tokens
+    let Id b_name _ = b in
+      return (b_name, c)
+  )
+  <|>
+  try (do
+    a <- idToken
+    b <- all_possible_type_tokens
+    let Id a_name _ = a in
+      return (a_name, b)
+  )
 
 params :: ParsecT [Token] MemoryState IO [(String, Type)]
 params =
@@ -1713,7 +1729,8 @@ show_pretty_type_values t = case t of
   Record name fields -> name ++ " (" ++ show_fields fields ++ ")"
   Enumeration name values -> name ++ " (" ++ show_fields values ++ ")"
 
--- Função auxiliar para imprimir os campos/labels formatados
+-- função auxiliar para imprimir os campos/labels formatados
+
 show_fields :: [(String, Type, Bool)] -> String
 show_fields [] = ""
 show_fields [(fname, ftype, _)] = fname ++ ": " ++ show_pretty_type_values ftype
