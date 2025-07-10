@@ -441,8 +441,7 @@ initial_declarations :: ParsecT [Token] MemoryState IO [Token]
 initial_declarations =
   try (do
     a <- user_defined_types
-    b <- initial_declarations
-    return (a ++ b)
+    initial_declarations
   )
   <|>
   try (do
@@ -455,13 +454,11 @@ initial_declarations =
   )
   <|> try (do
     a <- data_structures_declarations
-    b <- initial_declarations
-    return (a ++ b)
+    initial_declarations
   )
   <|> try (do
     a <- subprograms
-    b <- initial_declarations
-    return (a ++ b)
+    initial_declarations
   )
   <|> return []
 
@@ -708,7 +705,6 @@ stmt =
     procedure_call
     return []
   )
-  <|> try assign
   <|>
   try (do
     variable_declarations
@@ -721,6 +717,8 @@ stmt =
   )
   <|> try data_structures_declarations
   <|> try function_return
+  --- obs.: manter assign por último! caso contrário, podemos ter conflito com o access_chain nas declarações de constantes/variáveis
+  <|> try assign
 
 all_assign_tokens :: ParsecT [Token] MemoryState IO ((Int, Int) -> Type -> Type -> Type)
 all_assign_tokens =
@@ -1136,7 +1134,7 @@ access_chain_tail current_type pos =
 field_access :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
 field_access (Record record_name fields) pos = access_from_fields record_name fields pos
 field_access (Enumeration enum_name fields) pos = access_from_fields enum_name fields pos
-field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access" 
+field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access"
   ++ "; line: " ++ show line ++ ", column: " ++ show col
 
 access_from_fields :: String -> [(String, Type, Bool)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
@@ -1590,17 +1588,57 @@ typetable_insert _ _ st = st  -- ignora outros tipos
 
 symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
 symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _) = do
-    let declared_names = [name | (name, _, _) <- current_table] in
-        if name `elem` declared_names
-        then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
-        else st { symtable = current_table ++ [(name, typ, is_variable)] }
+  let declared_names = [name | (name, _, _) <- current_table] in
+    if name `elem` declared_names
+      then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
+      else st { symtable = current_table ++ [(name, typ, is_variable)] }
 
+-- atualiza o valor na tabela de símbolos usando uma cadeia de acesso
 symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
-symtable_update_by_access_chain [] _ st = st  -- nada a atualizar
-symtable_update_by_access_chain [Id name pos] new_value st = symtable_update (Id name pos, new_value) st -- id simples, utilizar symtable update regular para atualizar a memória
-symtable_update_by_access_chain (Id var_name pos : rest) new_value st =
-  let table = symtable st in
-  case lookup var_name [(n, t) | (n, t, _) <- table] of
+symtable_update_by_access_chain [] _ st = st -- Cadeia vazia, nada a fazer
+symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
+symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table executing) =
+  case lookup base_name [(n, v) | (n, v, _) <- sym_table] of
+    Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+    Just base_type ->
+      let updated_type = update_nested_type base_type rest new_val pos
+          updated_sym_table = update_entry base_name updated_type sym_table
+      in st { symtable = updated_sym_table }
+symtable_update_by_access_chain _ _ st = st -- fallback seguro
+
+update_nested_type :: Type -> [Token] -> Type -> (Int, Int) -> Type
+update_nested_type _ [] _ _ = error "invalid access chain: empty tail"
+update_nested_type (Record name fields) (Id field_name _ : rest) new_val pos =
+  let updated_fields = map update_field fields
+      update_field (fname, ftype, is_var)
+        | fname == field_name =
+            if null rest
+              then (fname, new_val, is_var)
+              else (fname, update_nested_type ftype rest new_val pos, is_var)
+        | otherwise = (fname, ftype, is_var)
+  in Record name updated_fields
+update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val pos =
+  let updated_labels = map update_label fields
+      update_label (lname, ltype, is_var)
+        | lname == label_name =
+            if null rest
+              then (lname, new_val, is_var)
+              else (lname, update_nested_type ltype rest new_val pos, is_var)
+        | otherwise = (lname, ltype, is_var)
+  in Enumeration name updated_labels
+update_nested_type t (_ : _) _ (line, col) =
+  error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++
+          "; line " ++ show line ++ ", column " ++ show col
+
+update_entry :: String -> Type -> SymbolTable -> SymbolTable
+update_entry _ _ [] = []
+update_entry name new_val ((n, t, is_var) : rest)
+  | n == name =
+      if not is_var
+        then error $ "cannot assign to constant \"" ++ name ++ "\""
+        else (n, new_val, is_var) : rest
+  | otherwise = (n, t, is_var) : update_entry name new_val rest
+
 
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
@@ -1699,8 +1737,8 @@ unary_type_error op_name t (line, column) =
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
 assign_type_error_msg :: Type -> Type -> (Int, Int) -> String
-assign_type_error_msg expected_type provided_type (line, column) = "type error in assign operation: variable expects type " ++ 
-  show_pretty_types expected_type ++ ", but got " ++ show_pretty_type_values provided_type ++ "instead; line: " ++ show line ++ ", column: " ++ show column
+assign_type_error_msg expected_type provided_type (line, column) = "type error in assign operation: variable expects type " ++
+  show_pretty_types expected_type ++ ", but got " ++ show_pretty_type_values provided_type ++ " instead; line: " ++ show line ++ ", column: " ++ show column
 
 condition_type_error :: String -> Type -> (Int, Int) -> a
 condition_type_error conditional_name t (line, column) =
