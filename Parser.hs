@@ -4,6 +4,7 @@
 {-# HLINT ignore "Use newtype instead of data" #-}
 {-# HLINT ignore "Redundant lambda" #-}
 {-# HLINT ignore "Use lambda-case" #-}
+{-# HLINT ignore "Eta reduce" #-}
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
@@ -562,7 +563,7 @@ variable_guess_declaration_assignment = do
   s <- getState
   when (executing s) $
     updateState (symtable_insert (a, d, True))
-  let Id name _ = a 
+  let Id name _ = a
     in return (name, d, True)
 
 const_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
@@ -606,7 +607,7 @@ const_guess_declaration_assignment = do
     then do
     when (executing s) $
       updateState (symtable_insert (a, e, False))
-    let Id name _ = a 
+    let Id name _ = a
       in return (name, e, False)
     else
       fail $ const_guess_declaration_assignment_error_msg (line, col)
@@ -708,12 +709,12 @@ stmt =
     return []
   )
   <|> try assign
-  <|> 
+  <|>
   try (do
     variable_declarations
     return []
   )
-  <|> 
+  <|>
   try (do
     const_declarations
     return []
@@ -721,100 +722,64 @@ stmt =
   <|> try data_structures_declarations
   <|> try function_return
 
-all_assign_tokens :: ParsecT [Token] MemoryState IO (Token -> Type -> MemoryState -> Either String Type)
+all_assign_tokens :: ParsecT [Token] MemoryState IO ((Int, Int) -> Type -> Type -> Type)
 all_assign_tokens =
   try (do
-    Assign pos@(line, col) <- assignToken
-    return (assign_eq (line, col))
+    a <- assignToken
+    return assign_eq
   )
   <|>
   try (do
     AddAssign pos@(line, col) <- addAssignToken
-    return (assign_add (line, col))
+    return do_number_add_op
   )
   <|>
   try (do
     SubAssign pos@(line, col) <- subAssignToken
-    return (assign_sub (line, col))
+    return do_sub_op
   )
   <|>
   try (do
     MulAssign pos@(line, col) <- mulAssignToken
-    return (assign_mul (line, col))
+    return do_mul_op
   )
   <|>
   try (do
     DivAssign pos@(line, col) <- divAssignToken
-    return (assign_div (line, col))
+    return do_div_op
   )
   <|>
   try (do
     RemAssign pos@(line, col) <- remAssignToken
-    return (assign_rem (line, col))
+    return do_rem_op
   )
   <|>
   try (do
     PowAssign pos@(line, col) <- powAssignToken
-    return (assign_pow (line, col))
+    return do_pow_op
   )
 
-assign_eq :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_eq = assign_with_op (\_ _ expr -> expr)
-
-assign_add :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_add = assign_with_op do_number_add_op
-
-assign_sub :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_sub = assign_with_op do_sub_op
-
-assign_mul :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_mul = assign_with_op do_mul_op
-
-assign_div :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_div = assign_with_op do_div_op
-
-assign_rem :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_rem = assign_with_op do_rem_op
-
-assign_pow :: (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_pow = assign_with_op do_pow_op
-
-assign_with_op :: ((Int, Int) -> (Type -> Type -> Type)) -> (Int, Int) -> (Token -> Type -> MemoryState -> Either String Type)
-assign_with_op op (line, column) variable_name expression state =
-  let
-    (Id name _) = variable_name
-    variable_type = get_variable_value variable_name state
-    base_variable_type = extract_base_type variable_type
-    base_expr_type = extract_base_type expression
-    result = op (line, column) variable_type expression
-  in
-    if compare_type_base base_variable_type base_expr_type then
-      Right result
-    else
-      Left $ variable_type_error_msg name base_variable_type result (line, column)
+assign_eq :: (Int, Int) -> Type -> Type -> Type
+assign_eq _ assignee assigned = assigned -- retorna o valor original
 
 assign :: ParsecT [Token] MemoryState IO [Token]
-assign = try $ do
-  a <- idToken
+assign = do
+  (access_type, token_chain) <- access_chain
   assign_function <- all_assign_tokens
   b <- expression
   c <- semiColonToken
   s <- getState
-  when (executing s) $ do
-    case assign_function a b s of
-      Right new_value -> updateState (symtable_update (a, new_value))
-      Left error_msg    -> fail error_msg
-  return [a]
-  <|>
-  try (do
-    a <- idToken
-    b <- all_assign_tokens
-    c <- expression
-    d <- semiColonToken
-    -- updateState (symtable_update (a, c))
-    return [a]
-    -- return ([a] ++ [b] ++ c ++ [d])
-  )
+  let access_base_type = extract_base_type access_type
+  let expr_base_type = extract_base_type b
+  let (Id _ (line, col)) = head token_chain
+  let new_value = assign_function (line, col) access_type b
+  if access_base_type == expr_base_type
+    then do
+      when (executing s) $
+        updateState (symtable_update_by_access_chain token_chain new_value)
+      return token_chain
+    else
+      fail $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
@@ -826,7 +791,7 @@ procedure_call =
     e <- semiColonToken
     return ()
   )
-  <|> 
+  <|>
   try (do
     a <- print_procedure
     return ()
@@ -902,10 +867,11 @@ factor :: ParsecT [Token] MemoryState IO Type
 factor =
   try string_tokens
   <|> try function_call
-  -- <|> try access_chain
-  <|> do
-    a <- idToken
-    get_variable_value a <$> getState
+  <|>
+  try (do
+    a@(t, _) <- access_chain
+    return t
+  )
   <|> try numeric_literal_tokens
   <|> try boolean_tokens
   <|>
@@ -1151,21 +1117,48 @@ all_comparison_ops =
   try non_prioritary_comparison_ops
   <|> try prioritary_comparison_ops
 
-access_chain :: ParsecT [Token] MemoryState IO [Token]
+access_chain :: ParsecT [Token] MemoryState IO (Type, [Token])
 access_chain = do
-  a <- idToken
-  b <- remaining_access_chain
-  return (a : b)
+  first_id@(Id name (line, col)) <- idToken
+  st <- getState
+  let current_type = lookup_variable first_id (symtable st)
+  (final_type, chain_tokens) <- access_chain_tail current_type (line, col)
+  return (final_type, first_id : chain_tokens)
 
-remaining_access_chain :: ParsecT [Token] MemoryState IO [Token]
-remaining_access_chain =
+access_chain_tail :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+access_chain_tail current_type pos =
   try (do
-    a <- dotToken
-    b <- idToken
-    rest <- remaining_access_chain
-    return ([a] ++ [b] ++ rest)
-  )
-  -- <|>
+    (next_type, tokens) <- field_access current_type pos
+    (final_type, rest_tokens) <- access_chain_tail next_type pos
+    return (final_type, tokens ++ rest_tokens)
+  ) <|> return (current_type, [])
+
+field_access :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+field_access (Record record_name fields) pos = access_from_fields record_name fields pos
+field_access (Enumeration enum_name fields) pos = access_from_fields enum_name fields pos
+field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access" 
+  ++ "; line: " ++ show line ++ ", column: " ++ show col
+
+access_from_fields :: String -> [(String, Type, Bool)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+access_from_fields type_name entries _ = do
+  dot <- dotToken
+  field@(Id field_name (line, col)) <- idToken
+  let fields_map = map (\(n, t, _) -> (n, t)) entries
+  case lookup field_name fields_map of
+    Just t -> return (t, [field])
+    Nothing -> fail $
+      "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name
+      ++ "; line: " ++ show line ++ ", column: " ++ show col
+
+-- remaining_access_chain :: ParsecT [Token] MemoryState IO [Token]
+-- remaining_access_chain =
+--   try (do
+--     a <- dotToken
+--     b <- idToken
+--     rest <- remaining_access_chain
+--     return ([a] ++ [b] ++ rest)
+--   )
+--   -- <|>
   -- try (do
   --   a <- braceLeftToken
   --   b <- expression
@@ -1183,7 +1176,7 @@ remaining_access_chain =
   --   rest <- remaining_access_chain
   --   return ([a] ++ b ++ [c] ++ d ++ [e] ++ rest)
   -- )
-  <|> return []
+  -- <|> return []
 
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call =
@@ -1237,11 +1230,11 @@ repeat_until = do
 
     a <- repeatToken
     b <- bracketLeftToken
-    
+
     inputBefore <- getInput
     c <- stmts
     inputAfter <- getInput
-    
+
     d <- bracketRightToken
 
     e <- untilToken
@@ -1308,10 +1301,10 @@ for_variable_initialization =
 for_condition :: ParsecT [Token] MemoryState IO [Token]
 for_condition =
   try (do
-    a <- access_chain
+    a <- idToken
     b <- all_comparison_ops
     c <- expression
-    return a
+    return [a]
     -- return (a ++ [b] ++ c)
   )
   <|>
@@ -1326,10 +1319,10 @@ for_condition =
 for_assign :: ParsecT [Token] MemoryState IO [Token]
 for_assign =
   try (do
-    a <- access_chain
+    a <- idToken
     b <- all_assign_tokens
     c <- expression
-    return a
+    return [a]
     -- return (a ++ [b] ++ c)
   )
   <|>
@@ -1602,6 +1595,13 @@ symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState curre
         then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
         else st { symtable = current_table ++ [(name, typ, is_variable)] }
 
+symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
+symtable_update_by_access_chain [] _ st = st  -- nada a atualizar
+symtable_update_by_access_chain [Id name pos] new_value st = symtable_update (Id name pos, new_value) st -- id simples, utilizar symtable update regular para atualizar a memória
+symtable_update_by_access_chain (Id var_name pos : rest) new_value st =
+  let table = symtable st in
+  case lookup var_name [(n, t) | (n, t, _) <- table] of
+
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
   error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
@@ -1687,16 +1687,20 @@ binary_type_error op_name first_type second_type (line, column) =
   show_pretty_type_values first_type ++ " and " ++ show_pretty_type_values second_type ++
   "; line: " ++ show line ++ ", column: " ++ show column
 
-unary_type_error :: String -> Type -> (Int, Int) -> a
-unary_type_error op_name t (line, column) =
-  error $ "type error in \"" ++ op_name ++ "\": unexpected parameter type " ++
-  show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
-
 variable_type_error_msg :: String -> Type -> Type -> (Int, Int) -> String
 variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: variable " ++ show variable_name
   ++ " expects type " ++ show_pretty_types expected_type ++
   ", but got " ++ show_pretty_type_values provided_type ++
   "; line: " ++ show line ++ ", column: " ++ show column
+
+unary_type_error :: String -> Type -> (Int, Int) -> a
+unary_type_error op_name t (line, column) =
+  error $ "type error in \"" ++ op_name ++ "\": unexpected parameter type " ++
+  show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
+
+assign_type_error_msg :: Type -> Type -> (Int, Int) -> String
+assign_type_error_msg expected_type provided_type (line, column) = "type error in assign operation: variable expects type " ++ 
+  show_pretty_types expected_type ++ ", but got " ++ show_pretty_type_values provided_type ++ "instead; line: " ++ show line ++ ", column: " ++ show column
 
 condition_type_error :: String -> Type -> (Int, Int) -> a
 condition_type_error conditional_name t (line, column) =
@@ -1727,7 +1731,7 @@ runParserTWithState parser initialState tokens = do
         s <- getState
         return (a, s)
         ) initialState "" tokens
-        
+
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())
