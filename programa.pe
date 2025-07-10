@@ -1,28 +1,21 @@
-enum Pessoa3 {
-    p Pessoa;
-    s float;
-    w float = 9.0;
-    q int;
+function example(&i int) int {
+    return 2;
 }
 
 struct Pessoa2 {
-    nome string = "isso eh uma string exemplo";
-    oiii Pessoa3;
+    flag bool;
 }
 
 struct Pessoa {
     nome string = "exemplo de inconstante";
     idade int = 21;
     idadeee int;
-    p Pessoa2;
+    p2 Pessoa2;
 }
-
-
 
 procedure main() {
     p Pessoa;
-
-    //p.p.oiii.w = 8.0;
-
-    print(p.p.oiii.w);
+    i int;
+    //i.oi = 2;
+    print(p.p2.flag);
 }
