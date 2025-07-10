@@ -1,5 +1,13 @@
+enum Pessoa3 {
+    p Pessoa;
+    s float;
+    w float = 9.0;
+    q int;
+}
+
 struct Pessoa2 {
-    nome string = "oi";
+    nome string = "isso eh uma string exemplo";
+    oiii Pessoa3;
 }
 
 struct Pessoa {
@@ -9,13 +17,12 @@ struct Pessoa {
     p Pessoa2;
 }
 
-enum Pessoa3 {
-    p Pessoa;
-    s float;
-    w float;
-    q int;
-}
+
 
 procedure main() {
-    p int = 2 + 2;
+    p Pessoa;
+
+    //p.p.oiii.w = 8.0;
+
+    print(p.p.oiii.w);
 }
