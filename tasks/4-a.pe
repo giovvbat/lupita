@@ -1,0 +1,16 @@
+struct rational_t {
+    numerador int;
+    denominador int;
+}
+
+function subprogram1(a int, b int) rational_t {
+    fraction rational_t;
+    fraction.numerador = a;
+    fraction.denominador = b;
+    return fraction;
+}
+
+procedure main() {
+    subprogram1(1, 2);
+    //print("the result is " + );
+}
