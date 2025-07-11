@@ -3,16 +3,15 @@ struct Pessoa {
     nomhe int;
 }
 
-function exemplo(a Pessoa) int {
-    x int;
+function exemplo() int {
+    r int = 2;
+    return true;
 }
 
 procedure exemplo2(a Pessoa) {
-    x int;
+    q int;
 }
 
 procedure main() {
-    p Pessoa;
-    p.nome = "Giovanna";
-    print(p.nome);
+    x const int = true;
 }
