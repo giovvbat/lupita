@@ -13,5 +13,6 @@ procedure exemplo2(a Pessoa) {
 }
 
 procedure main() {
-    x const int = true;
+    r guess = true;
+    s const guess = true;
 }

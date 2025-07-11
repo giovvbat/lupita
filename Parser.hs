@@ -568,7 +568,7 @@ variable_declaration_assignment = do
       updateState (symtable_insert (a, d, True))
       return (name, d, True)
     else
-      fail $ variable_type_error_msg name b d (line, col)
+      error $ variable_type_error_msg name b d (line, col)
 
 variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_guess_declaration_assignment = do
@@ -605,9 +605,9 @@ const_declaration_assignment = do
         updateState (symtable_insert (a, e, False))
         return (name, e, False)
         else
-          fail $ const_guess_declaration_assignment_error_msg (line, col)
+          error $ const_guess_declaration_assignment_error_msg (line, col)
     else
-      fail $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
+      error $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
 
 const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_guess_declaration_assignment = do
@@ -624,7 +624,7 @@ const_guess_declaration_assignment = do
     let Id name _ = a
       in return (name, e, False)
     else
-      fail $ const_guess_declaration_assignment_error_msg (line, col)
+      error $ const_guess_declaration_assignment_error_msg (line, col)
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
@@ -727,7 +727,7 @@ stmts = do
   case first of
     Just n -> return first
     Nothing -> return next
-  
+
 remaining_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 remaining_stmts =
   (do
@@ -826,7 +826,7 @@ assign = do
         updateState (symtable_update_by_access_chain token_chain new_value)
       return Nothing
     else
-      fail $ assign_type_error_msg access_type b (line, col)
+      error $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
@@ -1140,12 +1140,12 @@ do_neg_op :: (Int, Int) -> (Type -> Type)
 do_neg_op (line, col) = \t -> case t of
   Integer a  -> Integer (-a)
   Floating a -> Floating (-a)
-  a -> error $ unary_type_error "-" a (line, col)
+  a          -> error $ unary_type_error "-" a (line, col)
 
 do_not_op :: (Int, Int) -> (Type -> Type)
 do_not_op (line, col) = \t -> case t of
   Boolean a -> Boolean (not a)
-  a -> error $ unary_type_error "not" a (line, col)
+  a         -> error $ unary_type_error "not" a (line, col)
 
 prioritary_comparison_ops :: ParsecT [Token] MemoryState IO Token
 prioritary_comparison_ops =
@@ -1178,13 +1178,13 @@ access_chain_tail current_type pos =
     (next_type, tokens) <- field_access current_type pos
     (final_type, rest_tokens) <- access_chain_tail next_type pos
     return (final_type, tokens ++ rest_tokens)
-  ) 
+  )
   <|> return (current_type, [])
 
 field_access :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
 field_access (Record record_name fields) pos = access_from_fields record_name fields pos
 field_access (Enumeration enum_name fields) pos = access_from_fields enum_name fields pos
-field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access"
+field_access t (line, col) = error $ "type " ++ show_pretty_type_values t ++ " does not support field access"
   ++ "; line: " ++ show line ++ ", column: " ++ show col
 
 access_from_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
@@ -1194,7 +1194,7 @@ access_from_fields type_name entries _ = do
   let fields_map = map (\(n, t) -> (n, t)) entries
   case lookup field_name fields_map of
     Just t -> return (t, [field])
-    Nothing -> fail $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name
+    Nothing -> error $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name
       ++ "; line: " ++ show line ++ ", column: " ++ show col
 
 function_call :: ParsecT [Token] MemoryState IO Type
@@ -1211,7 +1211,7 @@ function_call =
     s' <- getState
     result <- lift $ runParserT stmts s' "" bodyTokens
     ret <- case result of
-      Left err -> fail (show err)
+      Left err -> error (show err)
       Right (Just return_val) ->
         if compare_type_base return_type return_val
           then return return_val
@@ -1275,15 +1275,15 @@ run_loop negateCondition condTokens bodyTokens (line, column) = do
   state <- getState
   condResult <- lift $ runParserT expression state "" condTokens
   condBool <- case condResult of
-    Left parseErr -> fail (show parseErr)
+    Left parseErr -> error (show parseErr)
     Right condExpr -> case check_condition "while" (line, column) condExpr of
-      Left err -> fail err
+      Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
   when condBool $ do
     state' <- getState
     result <- lift $ runParserTWithState stmts state' bodyTokens
     case result of
-      Left err -> fail (show err)
+      Left err -> error (show err)
       Right (_, newState) -> do
         putState newState
         run_loop negateCondition condTokens bodyTokens (line, column)
@@ -1411,7 +1411,7 @@ match_case = do
 cases :: Type -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 cases expr =
   try $ default_case False
-  <|> 
+  <|>
   try (do
     (a, matched_first) <- single_case expr False
     remaining_cases expr matched_first
@@ -1420,7 +1420,7 @@ cases expr =
 remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 remaining_cases expr matched =
   try $ default_case matched
-  <|> 
+  <|>
   try (do
     (a, matched_current) <- single_case expr matched
     remaining_cases expr matched_current
@@ -1560,15 +1560,13 @@ get_variable_value :: Token -> MemoryState -> Type
 get_variable_value token@(Id x _) (MemoryState table _ _ _) = lookup_variable token table
 
 lookup_variable :: Token -> SymbolTable -> Type
-lookup_variable (Id name (line, column)) [] =
-  error $ "undefined variable \"" ++ name ++ "\" in scope; line " ++ show line ++ " column " ++ show column
+lookup_variable (Id name (line, column)) [] = error $ "undefined variable \"" ++ name ++ "\" in scope; line " ++ show line ++ " column " ++ show column
 lookup_variable token@(Id name _) ((name2, typ, _) : rest)
   | name == name2 = typ
   | otherwise     = lookup_variable token rest
 
 lookup_type :: Token -> [Type] -> Type
-lookup_type (Id name (line, column)) [] =
-  error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_type token@(Id name _) (t : rest) = case t of
   Record name2 _ | name == name2 -> t
   Enumeration  name2 _ | name == name2 -> t
@@ -1587,26 +1585,24 @@ get_subprogram_name subprogram@(Procedure name _ _) = name
 get_subprogram_name subprogram@(Function name _ _ _) = name
 
 lookup_function :: Token -> [Subprogram] -> Subprogram
-lookup_function (Id name (line, column)) [] =
-    error $ "undefined function \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_function (Id name (line, column)) [] = error $ "undefined function \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_function token@(Id name (line, column)) (t : rest) = do
   let _ = traceShow "b" ();
   case t of
     Procedure proc_name _ _ | proc_name == name ->
-        error $ "expected function, but \"" ++ name ++ "\" is a procedure; line " ++ show line ++ " column " ++ show column
+      error $ "expected function, but \"" ++ name ++ "\" is a procedure; line " ++ show line ++ " column " ++ show column
     Function function_name _ _ _ | function_name == name -> t
     _ -> lookup_function token rest
 
 lookup_procedure :: Token -> [Subprogram] -> Subprogram
-lookup_procedure (Id name (line, column)) [] =
-    error $ "undefined procedure \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_procedure (Id name (line, column)) [] = error $ "undefined procedure \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_procedure token@(Id name (line, column)) (t : rest) = do
-    let _ = traceShow "a" ();
-    case t of
-      Function function_name _ _ _ | function_name == name ->
-          error $ "expected procedure, but \"" ++ name ++ "\" is a function; line " ++ show line ++ " column " ++ show column
-      Procedure proc_name _ _ | proc_name == name -> t
-      _ -> lookup_procedure token rest
+  let _ = traceShow "a" ();
+  case t of
+    Function function_name _ _ _ | function_name == name ->
+      error $ "expected procedure, but \"" ++ name ++ "\" is a function; line " ++ show line ++ " column " ++ show column
+    Procedure proc_name _ _ | proc_name == name -> t
+    _ -> lookup_procedure token rest
 
 typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
 typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _ _) =
@@ -1761,7 +1757,7 @@ binary_type_error op_name first_type second_type (line, column) =
   "; line: " ++ show line ++ ", column: " ++ show column
 
 variable_type_error_msg :: String -> Type -> Type -> (Int, Int) -> String
-variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: variable " ++ show variable_name
+variable_type_error_msg variable_name expected_type provided_type (line, column) = "type error: name " ++ show variable_name
   ++ " expects type " ++ show_pretty_types expected_type ++
   ", but got " ++ show_pretty_type_values provided_type ++
   "; line: " ++ show line ++ ", column: " ++ show column
