@@ -1,18 +1,8 @@
 struct Pessoa {
-    nome string = "2";
-    nomhe int;
-}
-
-function exemplo() int {
-    r int = 2;
-    return true;
-}
-
-procedure exemplo2(a Pessoa) {
-    q int;
+    nome string = "Amanda";
 }
 
 procedure main() {
-    r guess = true;
-    s const guess = true;
+    p Pessoa;
+    print("Hello, " + p.nome + "!");
 }

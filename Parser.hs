@@ -767,7 +767,8 @@ stmt =
   <|> try data_structures_declarations
   <|> try function_return
   --- obs.: manter assign por último! caso contrário, podemos ter conflito com o access_chain nas declarações de constantes/variáveis
-  <|> try assign
+  <|>
+  try assign
 
 all_assign_tokens :: ParsecT [Token] MemoryState IO ((Int, Int) -> Type -> Type -> Type)
 all_assign_tokens =
@@ -810,16 +811,17 @@ assign_eq :: (Int, Int) -> Type -> Type -> Type
 assign_eq _ assignee assigned = assigned -- retorna o valor original
 
 assign :: ParsecT [Token] MemoryState IO (Maybe Type)
-assign = do
+assign = try $ do
+  lookAhead all_assign_tokens  -- só tenta continuar se vier um token de atribuição
   (access_type, token_chain) <- access_chain
   assign_function <- all_assign_tokens
   b <- expression
-  c <- semiColonToken
+  _ <- semiColonToken
   s <- getState
   let access_base_type = extract_base_type access_type
-  let expr_base_type = extract_base_type b
-  let (Id _ (line, col)) = head token_chain
-  let new_value = assign_function (line, col) access_type b
+      expr_base_type = extract_base_type b
+      (Id _ (line, col)) = head token_chain
+      new_value = assign_function (line, col) access_type b
   if access_base_type == expr_base_type
     then do
       when (executing s) $
@@ -1173,29 +1175,33 @@ access_chain = do
   return (final_type, first_id : chain_tokens)
 
 access_chain_tail :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
-access_chain_tail current_type pos =
-  try (do
-    (next_type, tokens) <- field_access current_type pos
-    (final_type, rest_tokens) <- access_chain_tail next_type pos
-    return (final_type, tokens ++ rest_tokens)
-  )
-  <|> return (current_type, [])
+access_chain_tail current_type pos = do
+  has_dot <- optionMaybe (lookAhead dotToken)
+  case has_dot of
+    Just _ -> user_defined_types_field_acces current_type pos
+    Nothing -> return (current_type, [])
 
-field_access :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
-field_access (Record record_name fields) pos = access_from_fields record_name fields pos
-field_access (Enumeration enum_name fields) pos = access_from_fields enum_name fields pos
-field_access t (line, col) = error $ "type " ++ show_pretty_type_values t ++ " does not support field access"
-  ++ "; line: " ++ show line ++ ", column: " ++ show col
+user_defined_types_field_acces :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+user_defined_types_field_acces (Record name fields) pos = do
+  (field_type, tokens) <- access_from_user_defined_types_fields name fields pos
+  (final_type, rest) <- access_chain_tail field_type pos
+  return (final_type, tokens ++ rest)
+user_defined_types_field_acces (Enumeration name fields) pos = do
+  (field_type, tokens) <- access_from_user_defined_types_fields name fields pos
+  (final_type, rest) <- access_chain_tail field_type pos
+  return (final_type, tokens ++ rest)
+user_defined_types_field_acces t (line, col) =
+  error $ "type " ++ show_pretty_type_values t ++ " does not support field access" ++
+    "; line: " ++ show line ++ ", column: " ++ show col
 
-access_from_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
-access_from_fields type_name entries _ = do
-  dot <- dotToken
+access_from_user_defined_types_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+access_from_user_defined_types_fields type_name entries _ = do
+  _ <- dotToken
   field@(Id field_name (line, col)) <- idToken
-  let fields_map = map (\(n, t) -> (n, t)) entries
-  case lookup field_name fields_map of
-    Just t -> return (t, [field])
-    Nothing -> error $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name
-      ++ "; line: " ++ show line ++ ", column: " ++ show col
+  case lookup field_name entries of
+    Just t  -> return (t, [field])
+    Nothing -> error $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name ++
+      "; line: " ++ show line ++ ", column: " ++ show col
 
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call =
