@@ -12,10 +12,7 @@ function construct_rational(num int, den int) rational_t {
 }
 
 function compare_rationals(fst rational_t, snd rational_t) bool {
-    complete_fst guess = fst.num / fst.den;
-    complete_snd guess = snd.num / snd.den;
-
-    return complete_fst == complete_snd;
+    return fst.num * snd.den == snd.num * fst.den;
 }
 
 function add_rationals(fst rational_t, snd rational_t) rational_t {
@@ -25,6 +22,12 @@ function add_rationals(fst rational_t, snd rational_t) rational_t {
     result.den = fst.den * snd.den;
 
     return result;
+}
+
+function negate_rational(fst rational_t) rational_t {
+    fst.num = -fst.num;
+
+    return fst;
 }
 
 function sub_rationals(fst rational_t, snd rational_t) rational_t {
@@ -66,22 +69,31 @@ function divide_rationals(fst rational_t, snd rational_t) rational_t {
 procedure main() {
     fst_num int = 2;
     fst_den int = 8;
-    fst rational_t = construct_rational(fst_num, fst_den);
+    fst_rat rational_t = construct_rational(fst_num, fst_den);
 
     snd_num int = 3;
     snd_den int = 9;
-    snd rational_t = construct_rational(snd_num, snd_den);
+    snd_rat rational_t = construct_rational(snd_num, snd_den);
 
-    print("fst rational is: " + fst);
-    print("snd rational is: " + snd);
+    print("fst rational is: " + fst_rat);
+    print("snd rational is: " + snd_rat);
 
-    print("fst and snd add up to: " + add_rationals(fst, snd));
-    print("fst minus snd is: " + sub_rationals(fst, snd));
-    print("fst multiplied by snd is: " + multiply_rationals(fst, snd));
-    print("fst divided by snd is: " + divide_rationals(fst, snd));
+    print("fst and snd add up to: " + add_rationals(fst_rat, snd_rat));
+    print("fst minus snd is: " + sub_rationals(fst_rat, snd_rat));
+    print("fst multiplied by snd is: " + multiply_rationals(fst_rat, snd_rat));
+    print("fst divided by snd is: " + divide_rationals(fst_rat, snd_rat));
+    
+    print("negation of fst is: " + negate_rational(fst_rat));
+    print("negation of snd is: " + negate_rational(snd_rat));
 
-    print("inverse of fst is: " + inverse_rational(fst));
-    print("inverse of snd is: " + inverse_rational(snd));
+    print("inverse of fst is: " + inverse_rational(fst_rat));
+    print("inverse of snd is: " + inverse_rational(snd_rat));
+
+    if (compare_rationals(fst_rat, snd_rat)) {
+        print(fst_rat + " is equal to " + snd_rat);
+    } else {
+        print(fst_rat + " is not equal to " + snd_rat);
+    }
 }
 
 // extra: simplificar; verificar divisão por zero
