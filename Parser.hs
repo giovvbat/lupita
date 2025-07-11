@@ -17,6 +17,7 @@ import Text.Parsec
 import Data.Char (toLower)
 import Data.List (nub, (\\))
 import Control.Monad.Trans.Class (lift)
+import Debug.Trace (trace)
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -453,7 +454,7 @@ program = do
   b <- m
   -- print_symtable
   -- print_types
-  print_subprograms
+  -- print_subprograms
   eof
   return ()
 
@@ -540,7 +541,6 @@ variable_declarations =
   <|> try variable_declaration_assignment
   <|> try variable_guess_declaration_assignment
 
-variable_declaration :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declaration = do
   a <- idToken
   b <- all_possible_type_tokens
@@ -550,7 +550,6 @@ variable_declaration = do
     updateState (symtable_insert (a, b, True))
   let Id a_name _ = a in
     return (a_name, b, True)
-  -- return ([a] ++ b ++ [c])
 
 variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declaration_assignment = do
@@ -1510,7 +1509,9 @@ all_possible_type_tokens :: ParsecT [Token] MemoryState IO Type
 all_possible_type_tokens =
   try (do
     a <- try idToken <|> try typeToken
-    get_type_value a <$> getState
+    st <- getState
+    let t = get_type_value a st
+    t `seq` return t
   )
   -- <|>
   -- try (do
@@ -1595,7 +1596,7 @@ lookup_type (Id name (line, column)) [] =
   error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_type token@(Id name _) (t : rest) = case t of
   Record name2 _ | name == name2 -> t
-  Enumeration  name2 _ | name == name2 -> t
+  Enumeration name2 _ | name == name2 -> t
   _ -> lookup_type token rest
 
 subprogramtable_insert :: Subprogram -> (Int, Int) -> MemoryState -> MemoryState
@@ -1810,6 +1811,9 @@ print_subprograms :: ParsecT [Token] MemoryState IO ()
 print_subprograms = do
   st <- getState
   liftIO $ putStrLn ("available subprograms: " ++ show (subprogramtable st))
+
+print_mensagem_debug :: ParsecT [Token] MemoryState IO ()
+print_mensagem_debug = do liftIO $ putStrLn "entrou aqui"
 
 runParserTWithState
     :: ParsecT [Token] MemoryState IO a
