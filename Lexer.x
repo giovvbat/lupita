@@ -16,8 +16,8 @@ tokens :-
   $white+                              ;
   "//".*                               ;
   main                                 { \p s -> Main (getLC p) }
-  procedure                            { \p s -> Procedure (getLC p) }
-  function                             { \p s -> Function (getLC p) }
+  procedure                            { \p s -> Proc (getLC p) }
+  function                             { \p s -> Func (getLC p) }
   ";"                                  { \p s -> SemiColon (getLC p) }
   ":"                                  { \p s -> Colon (getLC p) }
   ","                                  { \p s -> Comma (getLC p) }
@@ -88,8 +88,8 @@ tokens :-
 -- The token type:
 data Token =
   Main (Int, Int) |
-  Procedure (Int, Int) |
-  Function (Int, Int) |
+  Proc (Int, Int) |
+  Func (Int, Int) |
   Comma   (Int, Int) |
   Dot   (Int, Int) |
   SemiColon (Int, Int) |

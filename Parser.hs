@@ -36,15 +36,28 @@ import Control.Monad.Trans.Class (lift)
 -- falsa se está em declaração de subprograma
 -- verdadeira quando entra na main
 
+-- Representa o modo de passagem de parâmetro: por valor ou por referência
+data PassMode = ByValue | ByReference
+  deriving (Show, Eq)
+
+-- nome do parâmetro, tipo, modo de passagem
+type FormalParam = (String, Type, PassMode)
+
+-- Tipo para distinguir função e procedimento
+data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam], proc_body :: [Token] } | 
+  Function { func_name :: String, func_params :: [FormalParam], func_return_type :: Type, func_body :: [Token] }
+  deriving (Show, Eq)
+
 -- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
 type SymbolTable = [(String, Type, Bool)]
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type, Bool)] | Enumeration String [(String, Type, Bool)]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
     deriving (Show, Eq)
 
 data MemoryState = MemoryState {
   symtable :: SymbolTable,
   typetable :: [Type],
+  subprogramtable :: [Subprogram],
   executing :: Bool
 }
 
@@ -53,13 +66,13 @@ data MemoryState = MemoryState {
 procedureToken :: ParsecT [Token] st IO Token
 procedureToken = tokenPrim show update_pos get_token
   where
-    get_token (Procedure p) = Just (Procedure p)
+    get_token (Proc p) = Just (Proc p)
     get_token _ = Nothing
 
 functionToken :: ParsecT [Token] st IO Token
 functionToken = tokenPrim show update_pos get_token
   where
-    get_token (Function p) = Just (Function p)
+    get_token (Func p) = Just (Func p)
     get_token _ = Nothing
 
 commaToken :: ParsecT [Token] st IO Token
@@ -440,6 +453,7 @@ program = do
   b <- m
   -- print_symtable
   -- print_types
+  print_subprograms
   eof
   return ()
 
@@ -505,18 +519,18 @@ enum = do
         updateState (typetable_insert (Enumeration b_name d) (line, col))
         return ([a] ++ [b] ++ [c] ++ [e])
 
-user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
+user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
-  first <- try variable_declarations
+  first@(name, t, is_var) <- try variable_declarations
   next <- remaining_user_defined_types_declarations
-  return (first : next)
+  return ((name, t) : next)
 
-remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type, Bool)]
+remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 remaining_user_defined_types_declarations =
   (do
-    first <- try variable_declarations
+    first@(name, t, is_var) <- try variable_declarations
     rest <- remaining_user_defined_types_declarations
-    return (first : rest)
+    return ((name, t) : rest)
   )
   <|> return []
 
@@ -636,48 +650,55 @@ subprograms = try function <|> try procedure
 procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
   a <- procedureToken
-  b <- idToken
+  b@(Id name (line, col)) <- idToken
   c <- parenLeftToken
   d <- params
   e <- parenRightToken
   f <- bracketLeftToken
+  before <- getInput
   g <- stmts
+  after <- getInput
   h <- bracketRightToken
+  let body_tokens = take (length before - length after) before
+  updateState (subprogramtable_insert (Procedure name d body_tokens) (line, col))
   return [a]
-  -- return (a : b : [c] ++ d ++ [e] ++ [f] ++ g ++ [h])
 
 function :: ParsecT [Token] MemoryState IO [Token]
 function = do
   a <- functionToken
-  b <- idToken
+  b@(Id name (line, col)) <- idToken
   c <- parenLeftToken
   d <- params
   e <- parenRightToken
   f <- all_possible_type_tokens
   g <- bracketLeftToken
+  before <- getInput
   h <- stmts
-  i <- bracketRightToken
+  after <- getInput
+  j <- bracketRightToken
+  let body_tokens = take (length before - length after) before
+  updateState (subprogramtable_insert (Function name d f body_tokens) (line, col))
   return [a]
-  -- return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
 
-param :: ParsecT [Token] MemoryState IO (String, Type)
-param = 
+
+param :: ParsecT [Token] MemoryState IO FormalParam
+param =
   try (do
     a <- referenceToken
     b <- idToken
     c <- all_possible_type_tokens
     let Id b_name _ = b in
-      return (b_name, c)
+      return (b_name, c, ByReference)
   )
   <|>
   try (do
     a <- idToken
     b <- all_possible_type_tokens
     let Id a_name _ = a in
-      return (a_name, b)
+      return (a_name, b, ByValue)
   )
 
-params :: ParsecT [Token] MemoryState IO [(String, Type)]
+params :: ParsecT [Token] MemoryState IO [FormalParam]
 params =
   (do
     first <- param
@@ -686,7 +707,7 @@ params =
   )
   <|> return []
 
-remainingParams :: ParsecT [Token] MemoryState IO [(String, Type)]
+remainingParams :: ParsecT [Token] MemoryState IO [FormalParam]
 remainingParams =
   (do
     a <- commaToken
@@ -1153,11 +1174,11 @@ field_access (Enumeration enum_name fields) pos = access_from_fields enum_name f
 field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access"
   ++ "; line: " ++ show line ++ ", column: " ++ show col
 
-access_from_fields :: String -> [(String, Type, Bool)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+access_from_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
 access_from_fields type_name entries _ = do
   dot <- dotToken
   field@(Id field_name (line, col)) <- idToken
-  let fields_map = map (\(n, t, _) -> (n, t)) entries
+  let fields_map = map (\(n, t) -> (n, t)) entries
   case lookup field_name fields_map of
     Just t -> return (t, [field])
     Nothing -> fail $
@@ -1199,7 +1220,7 @@ function_call =
   --   b <- parenLeftToken
   --   c <- expressions <|> return []
   --   d <- parenRightToken
-  --   return c
+  --   return (Type (Integer 0)
   --   -- return ([a, b] ++ c ++ [d])
   -- )
   -- <|> 
@@ -1557,10 +1578,10 @@ get_type_value (Int x _) _ = Integer x
 get_type_value (String x _) _ = Str x
 get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
-get_type_value token@(Id x _) (MemoryState _ table _) = lookup_type token table
+get_type_value token@(Id x _) (MemoryState _ table _ _) = lookup_type token table
 
 get_variable_value :: Token -> MemoryState -> Type
-get_variable_value token@(Id x _) (MemoryState table _ _) = lookup_variable token table
+get_variable_value token@(Id x _) (MemoryState table _ _ _) = lookup_variable token table
 
 lookup_variable :: Token -> SymbolTable -> Type
 lookup_variable (Id name (line, column)) [] =
@@ -1577,10 +1598,22 @@ lookup_type token@(Id name _) (t : rest) = case t of
   Enumeration  name2 _ | name == name2 -> t
   _ -> lookup_type token rest
 
+subprogramtable_insert :: Subprogram -> (Int, Int) -> MemoryState -> MemoryState
+subprogramtable_insert subprogram (line, col) st@(MemoryState sym typ subprogs exec) =
+  let name = get_subprogram_name subprogram
+      already_defined = any (\sp -> get_subprogram_name sp == name) subprogs
+  in if already_defined
+    then error $ "subprogram \"" ++ name ++ "\" already defined in program; line " ++ show line ++ ", column " ++ show col
+    else st { subprogramtable = subprogram : subprogs }
+
+get_subprogram_name :: Subprogram -> String
+get_subprogram_name subprogram@(Procedure name _ _) = name
+get_subprogram_name subprogram@(Function name _ _ _) = name
+
 typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
-typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _) =
+typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _ _) =
   let
-    field_names = map (\(fname, _, _) -> fname) fields
+    field_names = map fst fields
     duplicates = field_names \\ nub field_names
     existing_type_names = map get_type_name table
   in
@@ -1589,9 +1622,9 @@ typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _
     else if not (null duplicates)
       then error $ "duplicate field names in record " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
     else st {typetable = table ++ [t]}
-typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _) =
+typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _ _) =
   let
-    label_names = map (\(label, _, _) -> label) fields
+    label_names = map fst fields
     duplicates = label_names \\ nub label_names
     existing_type_names = map get_type_name table
   in
@@ -1603,7 +1636,7 @@ typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ ta
 typetable_insert _ _ st = st  -- ignora outros tipos
 
 symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
-symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _) = do
+symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _ _) = do
   let declared_names = [name | (name, _, _) <- current_table] in
     if name `elem` declared_names
       then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
@@ -1611,9 +1644,9 @@ symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState curre
 
 -- atualiza o valor na tabela de símbolos usando uma cadeia de acesso
 symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
-symtable_update_by_access_chain [] _ st = st -- Cadeia vazia, nada a fazer
+symtable_update_by_access_chain [] _ st = st -- cadeia vazia, nada a fazer
 symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
-symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table executing) =
+symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table subprogram_table executing) =
   case lookup base_name [(n, v) | (n, v, _) <- sym_table] of
     Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
     Just base_type ->
@@ -1623,24 +1656,23 @@ symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryStat
 symtable_update_by_access_chain _ _ st = st -- fallback seguro
 
 update_nested_type :: Type -> [Token] -> Type -> (Int, Int) -> Type
-update_nested_type _ [] _ _ = error "invalid access chain: empty tail"
 update_nested_type (Record name fields) (Id field_name _ : rest) new_val pos =
   let updated_fields = map update_field fields
-      update_field (fname, ftype, is_var)
+      update_field (fname, ftype)
         | fname == field_name =
             if null rest
-              then (fname, new_val, is_var)
-              else (fname, update_nested_type ftype rest new_val pos, is_var)
-        | otherwise = (fname, ftype, is_var)
+              then (fname, new_val)
+              else (fname, update_nested_type ftype rest new_val pos)
+        | otherwise = (fname, ftype)
   in Record name updated_fields
 update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val pos =
   let updated_labels = map update_label fields
-      update_label (lname, ltype, is_var)
+      update_label (lname, ltype)
         | lname == label_name =
             if null rest
-              then (lname, new_val, is_var)
-              else (lname, update_nested_type ltype rest new_val pos, is_var)
-        | otherwise = (lname, ltype, is_var)
+              then (lname, new_val)
+              else (lname, update_nested_type ltype rest new_val pos)
+        | otherwise = (lname, ltype)
   in Enumeration name updated_labels
 update_nested_type t (_ : _) _ (line, col) =
   error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++
@@ -1655,20 +1687,19 @@ update_entry name new_val ((n, t, is_var) : rest)
         else (n, new_val, is_var) : rest
   | otherwise = (n, t, is_var) : update_entry name new_val rest
 
-
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
-symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
+symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _ _) =
   error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
-symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table executing) =
+symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table subprogramtable executing) =
   if id_name == name
     then
       if not is_variable
         then error $ "cannot assign to constant \"" ++ id_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
         else st { symtable = (id_name, new_value, is_variable) : rest }
     else
-      let MemoryState updated_symtable updated_type_table updated_executing =
-            symtable_update (Id id_name pos, new_value) (MemoryState rest type_table executing)
-      in MemoryState ((name, old_value, is_variable) : updated_symtable) updated_type_table updated_executing
+      let MemoryState updated_symtable updated_type_table updated_subprogramtable updated_executing =
+            symtable_update (Id id_name pos, new_value) (MemoryState rest type_table subprogramtable executing)
+      in MemoryState ((name, old_value, is_variable) : updated_symtable) updated_type_table updated_subprogramtable updated_executing
 
 -- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
 -- symtable_remove _ [] = fail "variable not found"
@@ -1731,10 +1762,10 @@ show_pretty_type_values t = case t of
 
 -- função auxiliar para imprimir os campos/labels formatados
 
-show_fields :: [(String, Type, Bool)] -> String
+show_fields :: [(String, Type)] -> String
 show_fields [] = ""
-show_fields [(fname, ftype, _)] = fname ++ ": " ++ show_pretty_type_values ftype
-show_fields ((fname, ftype, _) : rest) = fname ++ ": " ++ show_pretty_type_values ftype ++ ", " ++ show_fields rest
+show_fields [(fname, ftype)] = fname ++ ": " ++ show_pretty_type_values ftype
+show_fields ((fname, ftype) : rest) = fname ++ ": " ++ show_pretty_type_values ftype ++ ", " ++ show_fields rest
 
 binary_type_error :: String -> Type -> Type -> (Int, Int) -> a
 binary_type_error op_name first_type second_type (line, column) =
@@ -1763,7 +1794,7 @@ condition_type_error conditional_name t (line, column) =
   show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
 const_guess_declaration_assignment_error_msg :: (Int, Int) -> String
-const_guess_declaration_assignment_error_msg (line, column) = "constants are of no bindability to user-defined types; line: " ++ show line ++ ", column: " ++ show column
+const_guess_declaration_assignment_error_msg (line, column) = "constants are of no bindability to user-defined types or data-structures; line: " ++ show line ++ ", column: " ++ show column
 
 print_symtable :: ParsecT [Token] MemoryState IO ()
 print_symtable = do
@@ -1774,6 +1805,11 @@ print_types :: ParsecT [Token] MemoryState IO ()
 print_types = do
   st <- getState
   liftIO $ putStrLn ("user defined types: " ++ show (typetable st))
+
+print_subprograms :: ParsecT [Token] MemoryState IO ()
+print_subprograms = do
+  st <- getState
+  liftIO $ putStrLn ("available subprograms: " ++ show (subprogramtable st))
 
 runParserTWithState
     :: ParsecT [Token] MemoryState IO a
@@ -1790,7 +1826,7 @@ runParserTWithState parser initialState tokens = do
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())
-parser = runParserT program (MemoryState { symtable = [] , typetable = [], executing = False}) "Parsing error!"
+parser = runParserT program (MemoryState { symtable = [] , typetable = [], subprogramtable = [], executing = False}) "Parsing error!"
 
 main :: IO ()
 main = do

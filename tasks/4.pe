@@ -1,0 +1,87 @@
+struct rational_t {
+    num int;
+    den int;
+}
+
+function construct_rational(num int, den int) rational_t {
+    fraction rational_t;
+    fraction.num = num;
+    fraction.den = den;
+
+    return fraction;
+}
+
+function compare_rationals(fst rational_t, snd rational_t) bool {
+    complete_fst guess = fst.num / fst.den;
+    complete_snd guess = snd.num / snd.den;
+
+    return complete_fst == complete_snd;
+}
+
+function add_rationals(fst rational_t, snd rational_t) rational_t {
+    result rational_t;
+
+    result.num = fst.num * snd.den + snd.num * fst.den;
+    result.den = fst.den * snd.den;
+
+    return result;
+}
+
+function sub_rationals(fst rational_t, snd rational_t) rational_t {
+    result rational_t;
+
+    result.num = fst.num * snd.den - snd.num * fst.den;
+    result.den = fst.den * snd.den;
+
+    return result;
+}
+
+function multiply_rationals(fst rational_t, snd rational_t) rational_t {
+    result rational_t;
+
+    result.num = fst.num * snd.num;
+    result.den = fst.den * snd.den;
+
+    return result;
+}
+
+function inverse_rational(input rational_t) rational_t {
+    result rational_t;
+
+    result.num = input.den;
+    result.den = input.num;
+
+    return result;
+}
+
+function divide_rationals(fst rational_t, snd rational_t) rational_t {
+    result rational_t;
+
+    result.num = fst.num * snd.den;
+    result.den = fst.den * snd.num;
+
+    return result;
+}
+
+procedure main() {
+    fst_num int = 2;
+    fst_den int = 8;
+    fst rational_t = construct_rational(fst_num, fst_den);
+
+    snd_num int = 3;
+    snd_den int = 9;
+    snd rational_t = construct_rational(snd_num, snd_den);
+
+    print("fst rational is: " + fst);
+    print("snd rational is: " + snd);
+
+    print("fst and snd add up to: " + add_rationals(fst, snd));
+    print("fst minus snd is: " + sub_rationals(fst, snd));
+    print("fst multiplied by snd is: " + multiply_rationals(fst, snd));
+    print("fst divided by snd is: " + divide_rationals(fst, snd));
+
+    print("inverse of fst is: " + inverse_rational(fst));
+    print("inverse of snd is: " + inverse_rational(snd));
+}
+
+// extra: simplificar; verificar divisão por zero
