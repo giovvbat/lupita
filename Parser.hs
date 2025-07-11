@@ -576,8 +576,8 @@ variable_guess_declaration_assignment = do
   d <- expression
   e <- semiColonToken
   s <- getState
-  when (executing s) $
-    updateState (symtable_insert (a, d, True))
+  -- when (executing s) $
+  updateState (symtable_insert (a, d, True))
   let Id name _ = a
     in return (name, d, True)
 
@@ -601,8 +601,8 @@ const_declaration_assignment = do
     then do
       if is_main_four_type declared_base_type
         then do
-        when (executing s) $
-          updateState (symtable_insert (a, e, False))
+        -- when (executing s) $
+        updateState (symtable_insert (a, e, False))
         return (name, e, False)
         else
           fail $ const_guess_declaration_assignment_error_msg (line, col)
@@ -620,8 +620,8 @@ const_guess_declaration_assignment = do
   s <- getState
   if is_main_four_type e
     then do
-    when (executing s) $
-      updateState (symtable_insert (a, e, False))
+    -- when (executing s) $
+    updateState (symtable_insert (a, e, False))
     let Id name _ = a
       in return (name, e, False)
     else
@@ -1245,28 +1245,28 @@ function_call :: ParsecT [Token] MemoryState IO Type
 function_call =
   try (do
     a <- idToken
-    b <- parenLeftToken
+    b@(ParenLeft (line, column)) <- parenLeftToken
     c <- expressions <|> return []
     d <- parenRightToken
     s <- getState
     let (Func x params return_type bodyTokens) = lookup_function a (subtable s)
     
-    zipWithM_ (\(s, t1) t2 -> updateState (symtable_insert (Id s (0, 0), t2, True))) params c;
+    zipWithM_ (\(s, t1) t2 -> updateState (symtable_insert (Id s (line, column), t2, True))) params c;
     
-    s <- getState
+    s' <- getState
 
-    -- if executing s then do
-    result <- lift $ runParserT stmts s "" bodyTokens
-    case result of
-        Left err -> fail (show err)
-        Right (Just return_val) -> if compare_type_base return_type return_val
-                                then do
-                                    return return_val
-                                else
-                                    error "erro no retorno da função"
-        Right Nothing -> error "nenhum return encontrado"
-        -- else
-        --     return return_type
+    result <- lift $ runParserT stmts s' "" bodyTokens
+    ret <- case result of
+            Left err -> fail (show err)
+            Right (Just return_val) -> if compare_type_base return_type return_val
+                                    then do
+                                        return return_val
+                                    else
+                                        error "erro no retorno da função"
+            Right Nothing -> error "nenhum return encontrado"
+    
+    putState s
+    return ret
 
   )
   <|>
@@ -1892,7 +1892,7 @@ parser = runParserT program (MemoryState { symtable = [] , typetable = [], execu
 
 main :: IO ()
 main = do
-  tokens <- getTokens "tasks/4-a.pe"
+  tokens <- getTokens "tasks/4.pe"
   result <- parser tokens
   case result of
     Left err -> print err
