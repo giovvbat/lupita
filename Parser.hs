@@ -8,7 +8,7 @@
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
-import Control.Monad (Functor (fmap), Monad (return), when, unless)
+import Control.Monad (Functor (fmap), Monad (return), when, unless, zipWithM_)
 import Control.Monad.IO.Class
 import GHC.Float (divideDouble)
 import GHC.RTS.Flags (TraceFlags (user))
@@ -17,6 +17,7 @@ import Text.Parsec
 import Data.Char (toLower)
 import Data.List (nub, (\\))
 import Control.Monad.Trans.Class (lift)
+import Debug.Trace (traceShow)
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -39,13 +40,19 @@ import Control.Monad.Trans.Class (lift)
 -- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
 type SymbolTable = [(String, Type, Bool)]
 
+type SubprogramTable = [Subprogram]
+
+data Subprogram = Func String [(String, Type)] Type [Token] | Proc String [(String, Type)] [Token]
+    deriving (Show, Eq)
+
 data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type, Bool)] | Enumeration String [(String, Type, Bool)]
     deriving (Show, Eq)
 
 data MemoryState = MemoryState {
   symtable :: SymbolTable,
   typetable :: [Type],
-  executing :: Bool
+  executing :: Bool,
+  subtable :: SubprogramTable
 }
 
 -- parsers para os tokens
@@ -438,8 +445,9 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  -- print_symtable
-  -- print_types
+  print_symtable
+  print_types
+  print_subprograms
   eof
   return ()
 
@@ -468,7 +476,7 @@ initial_declarations =
   )
   <|> return []
 
-data_structures_declarations :: ParsecT [Token] MemoryState IO [Token]
+data_structures_declarations :: ParsecT [Token] MemoryState IO (Maybe Type)
 data_structures_declarations = do
   a <- idToken
   b <- matrixToken <|> vectorToken
@@ -477,7 +485,7 @@ data_structures_declarations = do
   e <- greaterToken
   h <- semiColonToken
   -- updateState (symtable_insert (a, get_default_value b))
-  return [a]
+  return Nothing
   -- return ([a] ++ [b] ++ [c] ++ d ++ [e] ++ [h])
 
 user_defined_types :: ParsecT [Token] MemoryState IO [Token]
@@ -485,11 +493,15 @@ user_defined_types = enum <|> struct
 
 struct :: ParsecT [Token] MemoryState IO [Token]
 struct = do
+    s <- getState
     a@(Struct (line, col)) <- structToken
     b <- idToken
     c <- bracketLeftToken
     d <- user_defined_types_declarations
     e <- bracketRightToken
+
+    putState s
+
     let Id b_name _ = b in do
         updateState (typetable_insert (Record b_name d) (line, col))
         return ([a] ++ [b] ++ [c] ++ [e])
@@ -532,8 +544,8 @@ variable_declaration = do
   b <- all_possible_type_tokens
   c <- semiColonToken
   s <- getState
-  when (executing s) $
-    updateState (symtable_insert (a, b, True))
+  -- when (executing s) $
+  updateState (symtable_insert (a, b, True))
   let Id a_name _ = a in
     return (a_name, b, True)
   -- return ([a] ++ b ++ [c])
@@ -550,8 +562,8 @@ variable_declaration_assignment = do
   let declared_base_type = extract_base_type b
   if declared_base_type == expr_base_type
     then do
-      when (executing s) $
-        updateState (symtable_insert (a, d, True))
+      -- when (executing s) $
+      updateState (symtable_insert (a, d, True))
       return (name, d, True)
     else
       fail $ variable_type_error_msg name b d (line, col)
@@ -648,36 +660,52 @@ procedure = do
 
 function :: ParsecT [Token] MemoryState IO [Token]
 function = do
+  s <- getState
   a <- functionToken
   b <- idToken
   c <- parenLeftToken
   d <- params
+  mapM_ (\(tok, typ) -> updateState (symtable_insert (tok, typ, True))) d
   e <- parenRightToken
   f <- all_possible_type_tokens
   g <- bracketLeftToken
+
+  inputBefore <- getInput
   h <- stmts
+  inputAfter <- getInput
+
+  let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
+
   i <- bracketRightToken
+  let new_d = [ (name, typ) | (Id name _, typ) <- d]
+  let (Id b_name _) = b
+  let func = Func b_name new_d f bodyTokens
+
+  putState s
+
+  updateState $ add_function func
   return [a]
   -- return (a : b : [c] ++ d ++ [e] ++ f ++ [g] ++ h ++ [i])
 
-param :: ParsecT [Token] MemoryState IO (String, Type)
-param = 
+add_function :: Subprogram -> MemoryState -> MemoryState
+add_function func@(Func name params ret body) st@(MemoryState _ _ _ subtable) = st { subtable = subtable ++ [func] }
+
+param :: ParsecT [Token] MemoryState IO (Token, Type)
+param =
   try (do
     a <- referenceToken
     b <- idToken
     c <- all_possible_type_tokens
-    let Id b_name _ = b in
-      return (b_name, c)
+    return (b, c)
   )
   <|>
   try (do
     a <- idToken
     b <- all_possible_type_tokens
-    let Id a_name _ = a in
-      return (a_name, b)
+    return (a, b)
   )
 
-params :: ParsecT [Token] MemoryState IO [(String, Type)]
+params :: ParsecT [Token] MemoryState IO [(Token, Type)]
 params =
   (do
     first <- param
@@ -686,7 +714,7 @@ params =
   )
   <|> return []
 
-remainingParams :: ParsecT [Token] MemoryState IO [(String, Type)]
+remainingParams :: ParsecT [Token] MemoryState IO [(Token, Type)]
 remainingParams =
   (do
     a <- commaToken
@@ -696,22 +724,39 @@ remainingParams =
   )
   <|> return []
 
-stmts :: ParsecT [Token] MemoryState IO [Token]
+stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 stmts = do
   first <- stmt
+  exec <- executing <$> getState
+  case first of
+    Just n -> updateState (\st -> st { executing = False })
+    Nothing -> return ()
   next <- remaining_stmts
-  return (first ++ next)
+  updateState (\st -> st { executing = exec })
+  
+  case first of
+    Just n -> return first
+    Nothing -> return next
+  
 
-remaining_stmts :: ParsecT [Token] MemoryState IO [Token]
+remaining_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 remaining_stmts =
   (do
     a <- stmt
-    b <- remaining_stmts
-    return (a ++ b)
+    exec <- executing <$> getState
+    case a of
+      Just n -> updateState (\st -> st { executing = False })
+      Nothing -> return ()
+    next <- remaining_stmts
+    updateState (\st -> st { executing = exec })
+    
+    case a of
+        Just n -> return a
+        Nothing -> return next
   )
-  <|> return []
+  <|> return Nothing
 
-stmt :: ParsecT [Token] MemoryState IO [Token]
+stmt :: ParsecT [Token] MemoryState IO (Maybe Type)
 stmt =
   try loop
   <|> try all_escapes_stmts
@@ -719,17 +764,17 @@ stmt =
   <|>
   try (do
     procedure_call
-    return []
+    return Nothing
   )
   <|>
   try (do
     variable_declarations
-    return []
+    return Nothing
   )
   <|>
   try (do
     const_declarations
-    return []
+    return Nothing
   )
   <|> try data_structures_declarations
   <|> try function_return
@@ -776,7 +821,7 @@ all_assign_tokens =
 assign_eq :: (Int, Int) -> Type -> Type -> Type
 assign_eq _ assignee assigned = assigned -- retorna o valor original
 
-assign :: ParsecT [Token] MemoryState IO [Token]
+assign :: ParsecT [Token] MemoryState IO (Maybe Type)
 assign = do
   (access_type, token_chain) <- access_chain
   assign_function <- all_assign_tokens
@@ -791,18 +836,22 @@ assign = do
     then do
       when (executing s) $
         updateState (symtable_update_by_access_chain token_chain new_value)
-      return token_chain
+      return Nothing
     else
       fail $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
   try (do
-    a <- idToken
+    a@(Id a_name _) <- idToken
     b <- parenLeftToken
     c <- expressions <|> return []
     d <- parenRightToken
     e <- semiColonToken
+    s <- getState
+    liftIO $ print $ "about to look up procedure:" ++ a_name
+    let (Proc x y z) = lookup_procedure a (subtable s)
+    liftIO $ print $ "looked up procedure: " ++ x ++ show y
     return ()
   )
   <|>
@@ -811,12 +860,12 @@ procedure_call =
     return ()
   )
 
-function_return :: ParsecT [Token] MemoryState IO [Token]
+function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
 function_return = do
   a <- returnToken
   b <- expression
   c <- semiColonToken
-  return [a]
+  return (Just b)
   -- return ([a] ++ b ++ [c])
 
 expressions :: ParsecT [Token] MemoryState IO [Type]
@@ -1194,21 +1243,39 @@ access_from_fields type_name entries _ = do
 
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call =
-  -- try (do
-  --   a <- idToken
-  --   b <- parenLeftToken
-  --   c <- expressions <|> return []
-  --   d <- parenRightToken
-  --   return c
-  --   -- return ([a, b] ++ c ++ [d])
-  -- )
-  -- <|> 
+  try (do
+    a <- idToken
+    b <- parenLeftToken
+    c <- expressions <|> return []
+    d <- parenRightToken
+    s <- getState
+    let (Func x params return_type bodyTokens) = lookup_function a (subtable s)
+    
+    zipWithM_ (\(s, t1) t2 -> updateState (symtable_insert (Id s (0, 0), t2, True))) params c;
+    
+    s <- getState
+
+    -- if executing s then do
+    result <- lift $ runParserT stmts s "" bodyTokens
+    case result of
+        Left err -> fail (show err)
+        Right (Just return_val) -> if compare_type_base return_type return_val
+                                then do
+                                    return return_val
+                                else
+                                    error "erro no retorno da função"
+        Right Nothing -> error "nenhum return encontrado"
+        -- else
+        --     return return_type
+
+  )
+  <|>
   try scan_function
 
-loop :: ParsecT [Token] MemoryState IO [Token]
+loop :: ParsecT [Token] MemoryState IO (Maybe Type)
 loop = while <|> repeat_until <|> for
 
-while :: ParsecT [Token] MemoryState IO [Token]
+while :: ParsecT [Token] MemoryState IO (Maybe Type)
 while = do
   state <- getState
   let exec = executing state
@@ -1235,10 +1302,9 @@ while = do
   when exec $ do
     run_loop False condTokens bodyTokens (line, column)
 
-  return [a]
-  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
+  return Nothing
 
-repeat_until :: ParsecT [Token] MemoryState IO [Token]
+repeat_until :: ParsecT [Token] MemoryState IO (Maybe Type)
 repeat_until = do
     exec <- executing <$> getState
 
@@ -1267,7 +1333,7 @@ repeat_until = do
     when exec $ do
         run_loop True condTokens bodyTokens (line, column)
 
-    return [a]
+    return Nothing
 
 run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> ParsecT [Token] MemoryState IO ()
 run_loop negateCondition condTokens bodyTokens (line, column) = do
@@ -1289,7 +1355,7 @@ run_loop negateCondition condTokens bodyTokens (line, column) = do
                 putState newState
                 run_loop negateCondition condTokens bodyTokens (line, column)
 
-for :: ParsecT [Token] MemoryState IO [Token]
+for :: ParsecT [Token] MemoryState IO (Maybe Type)
 for = do
   a <- forToken
   b <- parenLeftToken
@@ -1301,7 +1367,8 @@ for = do
   h <- bracketLeftToken
   i <- stmts
   j <- bracketRightToken
-  return ([a] ++ [b] ++ c ++ d ++ [e] ++ f ++ [g] ++ [h]++ i ++ [j])
+  return i
+  -- return ([a] ++ [b] ++ c ++ d ++ [e] ++ f ++ [g]
 
 for_variable_initialization :: ParsecT [Token] MemoryState IO [Token]
 for_variable_initialization =
@@ -1348,16 +1415,20 @@ for_assign =
     -- return ([a] ++ [b] ++ c)
   )
 
-conditional :: ParsecT [Token] MemoryState IO [Token]
+conditional :: ParsecT [Token] MemoryState IO (Maybe Type)
 conditional = if_else <|> match_case
 
-if_else :: ParsecT [Token] MemoryState IO [Token]
+if_else :: ParsecT [Token] MemoryState IO (Maybe Type)
 if_else = do
   (first, cond) <- cond_if
   next <- cond_else cond
-  return (first ++ next)
+  
+  if cond then
+        return first
+    else
+        return next
 
-cond_if :: ParsecT [Token] MemoryState IO ([Token], Bool)
+cond_if :: ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 cond_if = do
   exec <- executing <$> getState
   a <- ifToken
@@ -1371,10 +1442,10 @@ cond_if = do
         unless cond $ updateState (\st -> st { executing = False })
         return cond
   e <- bracketLeftToken
-  f <- stmts
+  return_type <- stmts
   g <- bracketRightToken
   updateState (\st -> st { executing = exec })
-  return ([a], condBool)
+  return (return_type, condBool)
   -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [g])
 
 check_condition :: String -> (Int, Int) -> Type  -> Either String Bool
@@ -1384,7 +1455,7 @@ check_condition conditional_name (line, column) t =
     Left $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
     show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
-cond_else :: Bool -> ParsecT [Token] MemoryState IO [Token]
+cond_else :: Bool -> ParsecT [Token] MemoryState IO (Maybe Type)
 cond_else if_cond =
   (do
     exec <- executing <$> getState
@@ -1395,12 +1466,12 @@ cond_else if_cond =
     c <- stmts
     d <- bracketRightToken
     updateState (\st -> st { executing = exec })
-    return ([a] ++ [b] ++ c ++ [d])
+    return c
   )
   <|>
-  return []
+  return Nothing
 
-match_case :: ParsecT [Token] MemoryState IO [Token]
+match_case :: ParsecT [Token] MemoryState IO (Maybe Type)
 match_case = do
   exec <- executing <$> getState
   a <- matchToken
@@ -1408,31 +1479,30 @@ match_case = do
   expr <- expression
   d <- parenRightToken
   e <- bracketLeftToken
-  f <- cases expr
+  (return_type, f) <- cases expr
   h <- bracketRightToken
-  return [a]
-  -- return ([a] ++ [b] ++ c ++ [d] ++ [e] ++ f ++ [h])
+  return return_type
 
-cases :: Type -> ParsecT [Token] MemoryState IO Bool
+cases :: Type -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 cases expr =
   try $ default_case False
   <|>
   try (do
-    matched_first <- single_case expr False
+    (a, matched_first) <- single_case expr False
     remaining_cases expr matched_first
   )
 
-remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO Bool
+remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 remaining_cases expr matched =
   try $ default_case matched
   <|>
   try (do
-    matched_current <- single_case expr matched
+    (a, matched_current) <- single_case expr matched
     remaining_cases expr matched_current
   )
-  <|> return matched
+  <|> return (Nothing, matched)
 
-single_case :: Type -> Bool -> ParsecT [Token] MemoryState IO Bool
+single_case :: Type -> Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 single_case expr matched = do
   exec <- executing <$> getState
   a <- caseToken
@@ -1442,7 +1512,7 @@ single_case expr matched = do
     updateState (\st -> st { executing = False });
   d <- stmts
   updateState (\st -> st { executing = exec })
-  return (cond || matched)
+  return (d ,cond || matched)
 
 case_expression :: Type -> ParsecT [Token] MemoryState IO Bool
 case_expression expr =
@@ -1469,7 +1539,7 @@ remaining_case_expression expr =
   )
   <|> return False
 
-default_case :: Bool -> ParsecT [Token] MemoryState IO Bool
+default_case :: Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 default_case matched = do
     exec <- executing <$> getState
     a <- defaultToken
@@ -1478,7 +1548,7 @@ default_case matched = do
         updateState (\st -> st { executing = False })
     c <- stmts
     updateState (\st -> st { executing = exec })
-    return True
+    return (c, True)
 
 numeric_literal_tokens :: ParsecT [Token] MemoryState IO Type
 numeric_literal_tokens = do
@@ -1540,11 +1610,11 @@ scan_function = do
         else return 0
   return $ Integer n
 
-all_escapes_stmts :: ParsecT [Token] MemoryState IO [Token]
+all_escapes_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 all_escapes_stmts = do
   a <- continueToken <|> leaveToken <|> breakToken
   b <- semiColonToken
-  return (a : [b])
+  return Nothing
 
 -- funções para a tabela de símbolos
 
@@ -1557,10 +1627,10 @@ get_type_value (Int x _) _ = Integer x
 get_type_value (String x _) _ = Str x
 get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
-get_type_value token@(Id x _) (MemoryState _ table _) = lookup_type token table
+get_type_value token@(Id x _) (MemoryState _ table _ _) = lookup_type token table
 
 get_variable_value :: Token -> MemoryState -> Type
-get_variable_value token@(Id x _) (MemoryState table _ _) = lookup_variable token table
+get_variable_value token@(Id x _) (MemoryState table _ _ _) = lookup_variable token table
 
 lookup_variable :: Token -> SymbolTable -> Type
 lookup_variable (Id name (line, column)) [] =
@@ -1577,8 +1647,31 @@ lookup_type token@(Id name _) (t : rest) = case t of
   Enumeration  name2 _ | name == name2 -> t
   _ -> lookup_type token rest
 
+lookup_function :: Token -> SubprogramTable -> Subprogram
+lookup_function (Id name (line, column)) [] =
+    error $ "undefined function \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_function token@(Id name (line, column)) (t : rest) = do
+    let _ = traceShow "b" ();
+    case t of
+        Proc proc_name _ _ | proc_name == name ->
+            error $ "expected function, but \"" ++ name ++ "\" is a procedure; line " ++ show line ++ " column " ++ show column
+        Func function_name _ _ _ | function_name == name -> t
+        _ -> lookup_function token rest
+
+
+lookup_procedure :: Token -> SubprogramTable -> Subprogram
+lookup_procedure (Id name (line, column)) [] =
+    error $ "undefined procedure \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_procedure token@(Id name (line, column)) (t : rest) = do
+    let _ = traceShow "a" ();
+    case t of
+        Func function_name _ _ _ | function_name == name ->
+            error $ "expected procedure, but \"" ++ name ++ "\" is a function; line " ++ show line ++ " column " ++ show column
+        Proc proc_name _ _ | proc_name == name -> t
+        _ -> lookup_procedure token rest
+
 typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
-typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _) =
+typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _ _) =
   let
     field_names = map (\(fname, _, _) -> fname) fields
     duplicates = field_names \\ nub field_names
@@ -1589,7 +1682,7 @@ typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _
     else if not (null duplicates)
       then error $ "duplicate field names in record " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
     else st {typetable = table ++ [t]}
-typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _) =
+typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _ _) =
   let
     label_names = map (\(label, _, _) -> label) fields
     duplicates = label_names \\ nub label_names
@@ -1603,7 +1696,7 @@ typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ ta
 typetable_insert _ _ st = st  -- ignora outros tipos
 
 symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
-symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _) = do
+symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _ _) = do
   let declared_names = [name | (name, _, _) <- current_table] in
     if name `elem` declared_names
       then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
@@ -1613,7 +1706,7 @@ symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState curre
 symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
 symtable_update_by_access_chain [] _ st = st -- Cadeia vazia, nada a fazer
 symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
-symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table executing) =
+symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table executing _) =
   case lookup base_name [(n, v) | (n, v, _) <- sym_table] of
     Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
     Just base_type ->
@@ -1657,18 +1750,18 @@ update_entry name new_val ((n, t, is_var) : rest)
 
 
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
-symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _) =
+symtable_update (Id id_name (line, column), new_value) (MemoryState [] _ _ _) =
   error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
-symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table executing) =
+symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_variable) : rest) type_table executing sub_table) =
   if id_name == name
     then
       if not is_variable
         then error $ "cannot assign to constant \"" ++ id_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
         else st { symtable = (id_name, new_value, is_variable) : rest }
     else
-      let MemoryState updated_symtable updated_type_table updated_executing =
-            symtable_update (Id id_name pos, new_value) (MemoryState rest type_table executing)
-      in MemoryState ((name, old_value, is_variable) : updated_symtable) updated_type_table updated_executing
+      let MemoryState updated_symtable updated_type_table updated_executing updated_sub_table =
+            symtable_update (Id id_name pos, new_value) (MemoryState rest type_table executing sub_table)
+      in MemoryState ((name, old_value, is_variable) : updated_symtable) updated_type_table updated_executing updated_sub_table
 
 -- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
 -- symtable_remove _ [] = fail "variable not found"
@@ -1775,6 +1868,11 @@ print_types = do
   st <- getState
   liftIO $ putStrLn ("user defined types: " ++ show (typetable st))
 
+print_subprograms :: ParsecT [Token] MemoryState IO ()
+print_subprograms = do
+    st <- getState
+    liftIO $ putStrLn ("defined subprograms: " ++ show (subtable st))
+
 runParserTWithState
     :: ParsecT [Token] MemoryState IO a
     -> MemoryState
@@ -1790,11 +1888,11 @@ runParserTWithState parser initialState tokens = do
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())
-parser = runParserT program (MemoryState { symtable = [] , typetable = [], executing = False}) "Parsing error!"
+parser = runParserT program (MemoryState { symtable = [] , typetable = [], executing = False, subtable = []}) "Parsing error!"
 
 main :: IO ()
 main = do
-  tokens <- getTokens "programa.pe"
+  tokens <- getTokens "tasks/4-a.pe"
   result <- parser tokens
   case result of
     Left err -> print err

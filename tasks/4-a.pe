@@ -10,7 +10,16 @@ function subprogram1(a int, b int) rational_t {
     return fraction;
 }
 
-procedure main() {
-    subprogram1(1, 2);
-    //print("the result is " + );
+function b() int {
+    return 3;
 }
+
+function a() int {
+    return b();
+}
+
+procedure main() {
+    number int = a();
+    print(number);
+}
+
