@@ -1,8 +1,12 @@
-function example(a int) int {
-    x int;
+struct Pessoa {
+    nome string = "Amanda";
+}
+
+function say_hello(name string) string {
+    return ("Hello, " + name + "!");
 }
 
 procedure main() {
-    p int;
-    //print(p);
+    p Pessoa;
+    print(say_hello(p.nome));
 }
