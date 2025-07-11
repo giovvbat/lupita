@@ -573,7 +573,7 @@ variable_declaration_assignment = do
       updateState (symtable_insert (a, d, True))
       return (name, d, True)
     else
-      fail $ variable_type_error_msg name b d (line, col)
+      error $ variable_type_error_msg name b d (line, col)
 
 variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_guess_declaration_assignment = do
@@ -612,9 +612,9 @@ const_declaration_assignment = do
         updateState (symtable_insert (a, e, False))
         return (name, e, False)
         else
-          fail $ const_guess_declaration_assignment_error_msg (line, col)
+          error $ const_guess_declaration_assignment_error_msg (line, col)
     else
-      fail $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
+      error $ variable_type_error_msg name declared_base_type expr_base_type (line, col)
 
 const_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 const_guess_declaration_assignment = do
@@ -632,7 +632,7 @@ const_guess_declaration_assignment = do
     let Id name _ = a
       in return (name, e, False)
     else
-      fail $ const_guess_declaration_assignment_error_msg (line, col)
+      error $ const_guess_declaration_assignment_error_msg (line, col)
 
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
@@ -841,7 +841,7 @@ assign = do
         updateState (symtable_update_by_access_chain token_chain new_value)
       return Nothing
     else
-      fail $ assign_type_error_msg access_type b (line, col)
+      error $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
@@ -1202,7 +1202,7 @@ access_chain_tail current_type pos =
 field_access :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
 field_access (Record record_name fields) pos = access_from_fields record_name fields pos
 field_access (Enumeration enum_name fields) pos = access_from_fields enum_name fields pos
-field_access t (line, col) = fail $ "type " ++ show_pretty_type_values t ++ " does not support field access"
+field_access t (line, col) = error $ "type " ++ show_pretty_type_values t ++ " does not support field access"
   ++ "; line: " ++ show line ++ ", column: " ++ show col
 
 access_from_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
@@ -1212,7 +1212,7 @@ access_from_fields type_name entries _ = do
   let fields_map = map (\(n, t) -> (n, t)) entries
   case lookup field_name fields_map of
     Just t -> return (t, [field])
-    Nothing -> fail $
+    Nothing -> error $
       "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name
       ++ "; line: " ++ show line ++ ", column: " ++ show col
 
@@ -1260,7 +1260,7 @@ function_call =
 
     result <- lift $ runParserT stmts s' "" bodyTokens
     ret <- case result of
-            Left err -> fail (show err)
+            Left err -> error (show err)
             Right (Just return_val) -> if compare_type_base return_type return_val
                                     then do
                                         return return_val
@@ -1344,16 +1344,16 @@ run_loop negateCondition condTokens bodyTokens (line, column) = do
 
     condResult <- lift $ runParserT expression state "" condTokens
     condBool <- case condResult of
-        Left parseErr -> fail (show parseErr)
+        Left parseErr -> error (show parseErr)
         Right condExpr -> case check_condition "while" (line, column) condExpr of
-            Left err -> fail err
+            Left err -> error err
             Right boolVal -> return (if negateCondition then not boolVal else boolVal)
 
     when condBool $ do
         state' <- getState
         result <- lift $ runParserTWithState stmts state' bodyTokens
         case result of
-            Left err -> fail (show err)
+            Left err -> error (show err)
             Right (_, newState) -> do
                 putState newState
                 run_loop negateCondition condTokens bodyTokens (line, column)
@@ -1905,7 +1905,7 @@ parser = runParserT program (MemoryState { symtable = [] , typetable = [], subpr
 
 main :: IO ()
 main = do
-  tokens <- getTokens "tasks/4.pe"
+  tokens <- getTokens "programa.pe"
   result <- parser tokens
   case result of
     Left err -> print err

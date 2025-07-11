@@ -1,18 +1,4 @@
-struct Pessoa {
-    nome string = "2";
-    nomhe int;
-}
-
-function exemplo(a Pessoa) int {
-    x int;
-}
-
-procedure exemplo2(a Pessoa) {
-    x int;
-}
 
 procedure main() {
-    p Pessoa;
-    p.nome = "Giovanna";
-    print(p.nome);
+    x int = true;
 }
