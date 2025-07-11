@@ -1,21 +1,18 @@
-function example(&i int) int {
-    return 2;
-}
-
-struct Pessoa2 {
-    flag bool;
-}
-
 struct Pessoa {
-    nome string = "exemplo de inconstante";
-    idade int = 21;
-    idadeee int;
-    p2 Pessoa2;
+    nome string = "2";
+    nomhe int;
+}
+
+function exemplo(a Pessoa) int {
+    x int;
+}
+
+procedure exemplo2(a Pessoa) {
+    x int;
 }
 
 procedure main() {
     p Pessoa;
-    i int;
-    //i.oi = 2;
-    print(p.p2.flag);
+    p.nome = "Giovanna";
+    print(p.nome);
 }
