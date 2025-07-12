@@ -2,11 +2,15 @@ struct Pessoa {
     nome string = "Amanda";
 }
 
-function say_hello(name string) string {
-    return ("Hello, " + name + "!");
+procedure change_name(&name string) {
+    name = "Maria";
 }
+
 
 procedure main() {
     p Pessoa;
-    print(say_hello(p.nome));
+    print(p.nome);
+    change_name(p.nome);
+    print(p.nome);
 }
+

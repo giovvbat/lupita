@@ -645,10 +645,12 @@ subprograms = try function <|> try procedure
 
 procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
+  s <- getState
   a <- procedureToken
   b@(Id name (line, col)) <- idToken
-  c <- parenLeftToken
+  c@(ParenLeft (paramline, paramcol)) <- parenLeftToken
   d <- params
+  mapM_ (\(tok, typ, pass) -> updateState (symtable_insert (Id tok (paramline, paramcol), typ, True))) d
   e <- parenRightToken
   f <- bracketLeftToken
   before <- getInput
@@ -656,6 +658,7 @@ procedure = do
   after <- getInput
   h <- bracketRightToken
   let body_tokens = take (length before - length after) before
+  putState s
   updateState (subprogramtable_insert (Procedure name d body_tokens) (line, col))
   return [a]
 
@@ -812,7 +815,6 @@ assign_eq _ assignee assigned = assigned -- retorna o valor original
 
 assign :: ParsecT [Token] MemoryState IO (Maybe Type)
 assign = try $ do
-  lookAhead all_assign_tokens  -- só tenta continuar se vier um token de atribuição
   (access_type, token_chain) <- access_chain
   assign_function <- all_assign_tokens
   b <- expression
@@ -834,21 +836,38 @@ procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call =
   try (do
     a@(Id a_name _) <- idToken
-    b <- parenLeftToken
-    c <- expressions <|> return []
+    b@(ParenLeft (line, column)) <- parenLeftToken
+    c <- actual_params <|> return []
     d <- parenRightToken
     e <- semiColonToken
     s <- getState
-    liftIO $ print $ "about to look up procedure:" ++ a_name
-    let (Procedure x y z) = lookup_procedure a (subprogramtable s)
-    liftIO $ print $ "looked up procedure: " ++ x ++ show y
-    return ()
+    let (Procedure _ params bodyTokens) = lookup_procedure a (subprogramtable s)
+    zipWithM_ (\(name, t1, _) param -> do
+      let t2 = case param of
+              Left (t, _) -> t
+              Right t -> t
+      updateState (symtable_insert (Id name (line, column), t2, True))) params c
+    
+    s' <- getState
+
+    result <- lift $ runParserTWithState stmts s' bodyTokens
+    new_state <- case result of
+      Left err -> error (show err)
+      Right (Just return_val, _) ->
+        error "unexpected return in procedure"
+      Right (Nothing, new_state) -> return new_state
+    putState s
+
+    zipWithM_ (\(name, t1, passmode) param -> do
+        case (passmode, param) of
+          (ByValue, _) -> return ()
+          (ByReference, Right t) -> error "only variables may be passed by reference"
+          (ByReference, Left (ty, toks)) -> do
+            updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
+      ) params c
   )
   <|>
-  try (do
-    a <- print_procedure
-    return ()
-  )
+  try print_procedure
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
 function_return = do
@@ -1208,25 +1227,66 @@ function_call =
   try (do
     a <- idToken
     b@(ParenLeft (line, column)) <- parenLeftToken
-    c <- expressions <|> return []
+    c <- actual_params <|> return []
     d <- parenRightToken
     s <- getState
-    let (Function x params return_type bodyTokens) = lookup_function a (subprogramtable s)
-    zipWithM_ (\(s, t1, passmode) t2 ->
-      updateState (symtable_insert (Id s (line, column), t2, True))) params c
+    let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
+    zipWithM_ (\(name, t1, passmode) param -> do
+        let t2 = case param of
+                Left (t, _)  -> t
+                Right t  -> t
+        updateState (symtable_insert (Id name (line, column), t2, True))) params c
+    
     s' <- getState
-    result <- lift $ runParserT stmts s' "" bodyTokens
-    ret <- case result of
+
+    result <- lift $ runParserTWithState stmts s' bodyTokens
+    (ret, new_state) <- case result of
       Left err -> error (show err)
-      Right (Just return_val) ->
+      Right (Just return_val, new_state) ->
         if compare_type_base return_type return_val
-          then return return_val
+          then return (return_val, new_state)
           else error "erro no retorno da função"
-      Right Nothing -> error "nenhum return encontrado"
+      Right (Nothing, _) -> error "nenhum return encontrado"
     putState s
+
+    zipWithM_ (\(name, t1, passmode) param -> do
+        case (passmode, param) of
+          (ByValue, _) -> return ()
+          (ByReference, Right t) -> error "only variables may be passed by reference"
+          (ByReference, Left (_, toks)) -> do
+            updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
+      ) params c
+
     return ret
   )
   <|> try scan_function
+
+actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
+actual_params = do
+  first <- actual_param
+  next <- remaining_params
+  return (first : next)
+
+remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
+remaining_params = (do
+    a <- commaToken
+    b <- actual_param
+    c <- remaining_params
+    return (b : c)
+  )
+  <|> return []
+
+actual_param :: ParsecT [Token] MemoryState IO (Either (Type, [Token]) Type)
+actual_param = try (do
+    a <- access_chain
+    lookAhead (commaToken <|> parenRightToken)
+    return $ Left a
+  ) <|> 
+  try (do
+    Right <$> expression
+  )
+
+  
 
 loop :: ParsecT [Token] MemoryState IO (Maybe Type)
 loop = while <|> repeat_until <|> for
