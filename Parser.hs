@@ -15,7 +15,7 @@ import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
 import Data.Char (toLower)
-import Data.List (nub, (\\))
+import Data.List (nub, (\\), find)
 import Control.Monad.Trans.Class (lift)
 import Debug.Trace (traceShow)
 
@@ -59,7 +59,8 @@ data MemoryState = MemoryState {
   symtable :: SymbolTable,
   typetable :: [Type],
   subprogramtable :: [Subprogram],
-  executing :: Bool
+  executing :: Bool,
+  in_procedure :: Bool
 }
 
 -- parsers para os tokens
@@ -645,7 +646,9 @@ subprograms = try function <|> try procedure
 
 procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
-  s <- getState
+  original_state <- getState
+  let flaggedState = original_state { in_procedure = True }
+  putState flaggedState  -- ativa a flag para bloquear return
   a <- procedureToken
   b@(Id name (line, col)) <- idToken
   c@(ParenLeft (paramline, paramcol)) <- parenLeftToken
@@ -656,9 +659,9 @@ procedure = do
   before <- getInput
   g <- stmts
   after <- getInput
+  putState original_state  -- restaura o estado anterior (desativa flag)
   h <- bracketRightToken
   let body_tokens = take (length before - length after) before
-  putState s
   updateState (subprogramtable_insert (Procedure name d body_tokens) (line, col))
   return [a]
 
@@ -833,45 +836,51 @@ assign = try $ do
       error $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
-procedure_call =
-  try (do
-    a@(Id a_name _) <- idToken
-    b@(ParenLeft (line, column)) <- parenLeftToken
-    c <- actual_params <|> return []
-    d <- parenRightToken
-    e <- semiColonToken
-    s <- getState
-    let (Procedure _ params bodyTokens) = lookup_procedure a (subprogramtable s)
-    zipWithM_ (\(name, t1, _) param -> do
-      let t2 = case param of
-              Left (t, _) -> t
-              Right t -> t
-      updateState (symtable_insert (Id name (line, column), t2, True))) params c
-    
-    s' <- getState
-
-    result <- lift $ runParserTWithState stmts s' bodyTokens
-    new_state <- case result of
-      Left err -> error (show err)
-      Right (Just return_val, _) ->
-        error "unexpected return in procedure"
-      Right (Nothing, new_state) -> return new_state
-    putState s
-
-    zipWithM_ (\(name, t1, passmode) param -> do
-        case (passmode, param) of
-          (ByValue, _) -> return ()
-          (ByReference, Right t) -> error "only variables may be passed by reference"
-          (ByReference, Left (ty, toks)) -> do
-            updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
-      ) params c
-  )
-  <|>
-  try print_procedure
+procedure_call = try $ do
+  a@(Id a_name (id_line, id_col)) <- idToken
+  b@(ParenLeft (line, column)) <- parenLeftToken
+  c <- actual_params <|> return []
+  d <- parenRightToken
+  _ <- semiColonToken
+  s <- getState
+  let (Procedure _ params bodyTokens) = lookup_procedure a (subprogramtable s)
+  -- inseririndo parâmetros formais na tabela de símbolos
+  zipWithM_ (\(name, _, _) param -> do
+    let param_type = case param of
+          Left (t, _) -> t
+          Right t     -> t
+    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
+  s' <- getState
+  result <- lift $ runParserTWithState stmts s' bodyTokens
+  new_state <- case result of
+    Left err -> error (show err)
+    Right (_, st') -> return st'
+  putState s
+  -- atualizar variáveis passadas por referência
+  zipWithM_ (\(name, _, passmode) param -> do
+    case (passmode, param) of
+      (ByValue, _) -> return ()
+      (ByReference, Right _) -> error $ "no literals may be passed by reference as parameters; line " ++ show id_line ++ ", column: " ++ show id_col
+      (ByReference, Left (_, toks)) -> do
+        case toks of
+          (tokFirst:_) -> do
+            mIsConst <- is_name_constant tokFirst
+            case mIsConst of
+              Just True -> error $ "actual parameter \"" ++ get_id_name tokFirst ++ "\" is declared as constant and cannot be passed by reference; line " ++ show id_line ++ ", column: " ++ show id_col
+              _ -> return ()
+          _ -> return () -- tokens vazios, ignora ou lance erro se quiser
+        updateState $
+          symtable_update_by_access_chain toks
+            (get_variable_value (Id name (line, column)) new_state)
+    ) params c
+  <|> try print_procedure
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
 function_return = do
-  a <- returnToken
+  a@(Return (line, col)) <- returnToken
+  st <- getState
+  when (in_procedure st) $
+    error $ "return statements are not allowed among procedures; line: " ++ show line ++ ", col: " ++ show col
   b <- expression
   c <- semiColonToken
   return (Just b)
@@ -1223,42 +1232,75 @@ access_from_user_defined_types_fields type_name entries _ = do
       "; line: " ++ show line ++ ", column: " ++ show col
 
 function_call :: ParsecT [Token] MemoryState IO Type
-function_call =
-  try (do
-    a <- idToken
-    b@(ParenLeft (line, column)) <- parenLeftToken
-    c <- actual_params <|> return []
-    d <- parenRightToken
-    s <- getState
-    let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
-    zipWithM_ (\(name, t1, passmode) param -> do
-        let t2 = case param of
-                Left (t, _)  -> t
-                Right t  -> t
-        updateState (symtable_insert (Id name (line, column), t2, True))) params c
-    
-    s' <- getState
+function_call = try $ do
+  a@(Id a_name (id_line, id_col)) <- idToken
+  b@(ParenLeft (line, column)) <- parenLeftToken
+  c <- actual_params <|> return []
+  d <- parenRightToken
+  _ <- semiColonToken
+  s <- getState
+  let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
+  -- inseririndo parâmetros formais na tabela de símbolos
+  zipWithM_ (\(name, _, _) param -> do
+    let param_type = case param of
+          Left (t, _)  -> t
+          Right t  -> t
+    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
+  s' <- getState
+  result <- lift $ runParserTWithState stmts s' bodyTokens
+  (ret, new_state) <- case result of
+    Left err -> error (show err)
+    Right (Just return_val, new_state) ->
+      if compare_type_base return_type return_val
+        then return (return_val, new_state)
+        else error $ "type error: function \"" ++ show a_name ++ "\" expects type " ++ show_pretty_types return_type ++ 
+        ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    Right (Nothing, _) -> error $ "function expects at least one return statement, but got none; " ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+  putState s
+  zipWithM_ (\(name, t1, passmode) param -> do
+      case (passmode, param) of
+        (ByValue, _) -> return ()
+        (ByReference, Right t) -> error "only variables may be passed by reference"
+        (ByReference, Left (_, toks)) -> do
+          updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
+    ) params c
+  return ret
+  <|> try scan_function
 
-    result <- lift $ runParserTWithState stmts s' bodyTokens
-    (ret, new_state) <- case result of
-      Left err -> error (show err)
-      Right (Just return_val, new_state) ->
-        if compare_type_base return_type return_val
-          then return (return_val, new_state)
-          else error "erro no retorno da função"
-      Right (Nothing, _) -> error "nenhum return encontrado"
-    putState s
-
-    zipWithM_ (\(name, t1, passmode) param -> do
-        case (passmode, param) of
-          (ByValue, _) -> return ()
-          (ByReference, Right t) -> error "only variables may be passed by reference"
-          (ByReference, Left (_, toks)) -> do
-            updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
-      ) params c
-
-    return ret
-  )
+function_call2 :: ParsecT [Token] MemoryState IO Type
+function_call2 = try $ do
+  a@(Id a_name (id_line, id_col)) <- idToken
+  b@(ParenLeft (line, column)) <- parenLeftToken
+  c <- actual_params <|> return []
+  d <- parenRightToken
+  _ <- semiColonToken
+  s <- getState
+  let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
+  -- inseririndo parâmetros formais na tabela de símbolos
+  zipWithM_ (\(name, _, _) param -> do
+    let param_type = case param of
+          Left (t, _)  -> t
+          Right t  -> t
+    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
+  s' <- getState
+  result <- lift $ runParserTWithState stmts s' bodyTokens
+  (ret, new_state) <- case result of
+    Left err -> error (show err)
+    Right (Just return_val, new_state) ->
+      if compare_type_base return_type return_val
+        then return (return_val, new_state)
+        else error $ "type error: function \"" ++ show a_name ++ "\" expects type " ++ show_pretty_types return_type ++ 
+        ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    Right (Nothing, _) -> error $ "function expects at least one return statement, but got none; " ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+  putState s
+  zipWithM_ (\(name, t1, passmode) param -> do
+      case (passmode, param) of
+        (ByValue, _) -> return ()
+        (ByReference, Right t) -> error "only variables may be passed by reference"
+        (ByReference, Left (_, toks)) -> do
+          updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
+    ) params c
+  return ret
   <|> try scan_function
 
 actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
@@ -1268,7 +1310,8 @@ actual_params = do
   return (first : next)
 
 remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
-remaining_params = (do
+remaining_params = 
+  (do
     a <- commaToken
     b <- actual_param
     c <- remaining_params
@@ -1277,7 +1320,8 @@ remaining_params = (do
   <|> return []
 
 actual_param :: ParsecT [Token] MemoryState IO (Either (Type, [Token]) Type)
-actual_param = try (do
+actual_param = 
+  try (do
     a <- access_chain
     lookAhead (commaToken <|> parenRightToken)
     return $ Left a
@@ -1285,8 +1329,6 @@ actual_param = try (do
   try (do
     Right <$> expression
   )
-
-  
 
 loop :: ParsecT [Token] MemoryState IO (Maybe Type)
 loop = while <|> repeat_until <|> for
@@ -1620,16 +1662,25 @@ get_type_value (Int x _) _ = Integer x
 get_type_value (String x _) _ = Str x
 get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
-get_type_value token@(Id x _) (MemoryState _ table _ _) = lookup_type token table
+get_type_value token@(Id x _) (MemoryState _ table _ _ _) = lookup_type token table
 
 get_variable_value :: Token -> MemoryState -> Type
-get_variable_value token@(Id x _) (MemoryState table _ _ _) = lookup_variable token table
+get_variable_value token@(Id x _) (MemoryState table _ _ _ _) = lookup_variable token table
 
 lookup_variable :: Token -> SymbolTable -> Type
 lookup_variable (Id name (line, column)) [] = error $ "undefined variable \"" ++ name ++ "\" in scope; line " ++ show line ++ " column " ++ show column
 lookup_variable token@(Id name _) ((name2, typ, _) : rest)
   | name == name2 = typ
   | otherwise     = lookup_variable token rest
+
+is_name_constant :: Token -> ParsecT [Token] MemoryState IO (Maybe Bool)
+is_name_constant tok = do
+  st <- getState
+  let symtab = symtable st
+  case tok of
+    Id name _ -> 
+      return $ (\(_, _, is_var) -> Just (not is_var)) =<< find (\(n, _, _) -> n == name) symtab
+    _ -> return Nothing
 
 lookup_type :: Token -> [Type] -> Type
 lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
@@ -1639,7 +1690,7 @@ lookup_type token@(Id name _) (t : rest) = case t of
   _ -> lookup_type token rest
 
 subprogramtable_insert :: Subprogram -> (Int, Int) -> MemoryState -> MemoryState
-subprogramtable_insert subprogram (line, col) st@(MemoryState sym typ subprogs exec) =
+subprogramtable_insert subprogram (line, col) st@(MemoryState sym typ subprogs exec in_procedure) =
   let name = get_subprogram_name subprogram
       already_defined = any (\sp -> get_subprogram_name sp == name) subprogs
   in if already_defined
@@ -1671,7 +1722,7 @@ lookup_procedure token@(Id name (line, column)) (t : rest) = do
     _ -> lookup_procedure token rest
 
 typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
-typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _ _) =
+typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _ _ _) =
   let
     field_names = map fst fields
     duplicates = field_names \\ nub field_names
@@ -1682,7 +1733,7 @@ typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ table _
     else if not (null duplicates)
       then error $ "duplicate field names in record " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
     else st {typetable = table ++ [t]}
-typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _ _) =
+typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ table _ _ _) =
   let
     label_names = map fst fields
     duplicates = label_names \\ nub label_names
@@ -1696,7 +1747,7 @@ typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ ta
 typetable_insert _ _ st = st  -- ignora outros tipos
 
 symtable_insert :: (Token, Type, Bool) -> MemoryState -> MemoryState
-symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _ _) = do
+symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState current_table _ _ _ _) = do
   let declared_names = [name | (name, _, _) <- current_table] in
     if name `elem` declared_names
       then error $ "variable \"" ++ name ++ "\" already declared in scope; line " ++ show line ++ " column " ++ show column
@@ -1706,7 +1757,7 @@ symtable_insert (Id name (line, column), typ, is_variable) st@(MemoryState curre
 symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
 symtable_update_by_access_chain [] _ st = st -- cadeia vazia, nada a fazer
 symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
-symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table subprogram_table executing) =
+symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table subprogram_table executing in_procedure) =
   case lookup base_name [(n, v) | (n, v, _) <- sym_table] of
     Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
     Just base_type ->
@@ -1740,22 +1791,20 @@ update_entry name new_val ((n, t, is_var) : rest)
   | otherwise = (n, t, is_var) : update_entry name new_val rest
 
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
-symtable_update (Id id_name (line, column), _) (MemoryState [] _ _ _) =
+symtable_update (Id id_name (line, column), _) (MemoryState [] _ _ _ _) =
   error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
-symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_var) : rest) type_tab sub_tab exec)
+symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_var) : rest) type_tab sub_tab exec in_procedure)
   | id_name == name =
     if not is_var then error $ "cannot assign to constant \"" ++ id_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
     else st { symtable = (id_name, new_value, is_var) : rest }
   | otherwise =
-    let MemoryState sym' typ' sub' exec' = symtable_update (Id id_name pos, new_value) (MemoryState rest type_tab sub_tab exec)
-    in MemoryState ((name, old_value, is_var) : sym') typ' sub' exec'
+    let MemoryState sym' typ' sub' exec' in_proc' = symtable_update (Id id_name pos, new_value) (MemoryState rest type_tab sub_tab exec in_procedure)
+    in MemoryState ((name, old_value, is_var) : sym') typ' sub' exec' in_proc'
 
--- symtable_remove :: (Token, Token) -> MemoryState -> MemoryState
--- symtable_remove _ [] = fail "variable not found"
--- symtable_remove (id1, v1) ((id2, v2) : t) =
---   if id1 == id2
---     then t
---     else (id2, v2) : symtable_remove (id1, v1) t
+remove_local_variables :: [String] -> MemoryState -> MemoryState
+remove_local_variables names st@(MemoryState sym type_table subprog exec in_procedure) =
+  let new_sym = filter (\(name, _, _) -> name `notElem` names) sym
+  in MemoryState new_sym type_table subprog exec in_procedure
 
 is_main_four_type :: Type -> Bool
 is_main_four_type t = case t of
@@ -1788,6 +1837,10 @@ get_type_name :: Type -> String
 get_type_name (Record name _) = name
 get_type_name (Enumeration name _) = name
 get_type_name _ = ""
+
+get_id_name :: Token -> String
+get_id_name (Id name _) = name
+get_id_name _ = ""
 
 --- funções para auxiliar na impressão de mensagens de erro
 
@@ -1875,7 +1928,7 @@ runParserTWithState parser initialState tokens = do
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())
-parser = runParserT program (MemoryState { symtable = [] , typetable = [], subprogramtable = [], executing = False}) "Parsing error!"
+parser = runParserT program (MemoryState { symtable = [] , typetable = [], subprogramtable = [], executing = False, in_procedure = False}) "Parsing error!"
 
 main :: IO ()
 main = do

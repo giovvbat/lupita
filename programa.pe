@@ -1,16 +1,16 @@
-struct Pessoa {
-    nome string = "Amanda";
+function soma(c int, b int) int {
+    return c + b;
 }
 
-procedure change_name(&name string) {
-    name = "Maria";
+procedure example(r int) {
+    r = 7;
+    //return i;
 }
-
 
 procedure main() {
-    p Pessoa;
-    print(p.nome);
-    change_name(p.nome);
-    print(p.nome);
+    a const int = 4;
+    //print(a);
+    //example(a);
+    kjdn guess = soma(a, a);
 }
 
