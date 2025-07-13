@@ -45,7 +45,7 @@ data PassMode = ByValue | ByReference
 type FormalParam = (String, Type, PassMode)
 
 -- Tipo para distinguir função e procedimento
-data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam], proc_body :: [Token] } | 
+data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam], proc_body :: [Token] } |
   Function { func_name :: String, func_params :: [FormalParam], func_return_type :: Type, func_body :: [Token] }
   deriving (Show, Eq)
 
@@ -843,24 +843,40 @@ procedure_call = try $ do
   d <- parenRightToken
   _ <- semiColonToken
   s <- getState
+
   let (Procedure _ params bodyTokens) = lookup_procedure a (subprogramtable s)
-  -- inseririndo parâmetros formais na tabela de símbolos
-  zipWithM_ (\(name, _, _) param -> do
-    let param_type = case param of
+
+  -- verificar aridade
+  when (length c /= length params) $
+    error $ "incorrect number of arguments in call to procedure \"" ++ a_name ++
+      "\": expected " ++ show (length params) ++ ", got " ++ show (length c) ++
+      "; line: " ++ show id_line ++ ", column: " ++ show id_col
+
+  -- inserindo parâmetros formais na tabela de símbolos
+  zipWithM_ (\(formal_name, formal_type, _) actual -> do
+    let actual_type = case actual of
           Left (t, _) -> t
           Right t     -> t
-    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
+    when (extract_base_type formal_type /= extract_base_type actual_type) $
+      error $ "type mismatch for parameter \"" ++ formal_name ++
+        "\" in call to procedure \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
+        show_pretty_type_values actual_type ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    ) params c
+
   s' <- getState
   result <- lift $ runParserTWithState stmts s' bodyTokens
+
   new_state <- case result of
     Left err -> error (show err)
     Right (_, st') -> return st'
-  putState s
+
+  putState new_state
+
   -- atualizar variáveis passadas por referência
   zipWithM_ (\(name, _, passmode) param -> do
     case (passmode, param) of
       (ByValue, _) -> return ()
-      (ByReference, Right _) -> error $ "no literals may be passed by reference as parameters; line " ++ show id_line ++ ", column: " ++ show id_col
+      (ByReference, Right _) -> error $ "no literals may be used as by-reference parameters; line " ++ show id_line ++ ", column: " ++ show id_col
       (ByReference, Left (_, toks)) -> do
         case toks of
           (tokFirst:_) -> do
@@ -873,6 +889,11 @@ procedure_call = try $ do
           symtable_update_by_access_chain toks
             (get_variable_value (Id name (line, column)) new_state)
     ) params c
+
+  -- remover os parâmetros locais da tabela de símbolos
+  let param_names = map (\(name, _, _) -> name) params
+  modifyState (remove_procedure_locals param_names)
+
   <|> try print_procedure
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
@@ -1237,69 +1258,62 @@ function_call = try $ do
   b@(ParenLeft (line, column)) <- parenLeftToken
   c <- actual_params <|> return []
   d <- parenRightToken
-  _ <- semiColonToken
   s <- getState
-  let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
-  -- inseririndo parâmetros formais na tabela de símbolos
-  zipWithM_ (\(name, _, _) param -> do
-    let param_type = case param of
-          Left (t, _)  -> t
-          Right t  -> t
-    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
-  s' <- getState
-  result <- lift $ runParserTWithState stmts s' bodyTokens
-  (ret, new_state) <- case result of
-    Left err -> error (show err)
-    Right (Just return_val, new_state) ->
-      if compare_type_base return_type return_val
-        then return (return_val, new_state)
-        else error $ "type error: function \"" ++ show a_name ++ "\" expects type " ++ show_pretty_types return_type ++ 
-        ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-    Right (Nothing, _) -> error $ "function expects at least one return statement, but got none; " ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-  putState s
-  zipWithM_ (\(name, t1, passmode) param -> do
-      case (passmode, param) of
-        (ByValue, _) -> return ()
-        (ByReference, Right t) -> error "only variables may be passed by reference"
-        (ByReference, Left (_, toks)) -> do
-          updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
-    ) params c
-  return ret
-  <|> try scan_function
 
-function_call2 :: ParsecT [Token] MemoryState IO Type
-function_call2 = try $ do
-  a@(Id a_name (id_line, id_col)) <- idToken
-  b@(ParenLeft (line, column)) <- parenLeftToken
-  c <- actual_params <|> return []
-  d <- parenRightToken
-  _ <- semiColonToken
-  s <- getState
   let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
-  -- inseririndo parâmetros formais na tabela de símbolos
-  zipWithM_ (\(name, _, _) param -> do
-    let param_type = case param of
-          Left (t, _)  -> t
-          Right t  -> t
-    updateState (symtable_insert (Id name (line, column), param_type, True))) params c
+  
+  -- verificar aridade
+  when (length c /= length params) $
+    error $ "incorrect number of arguments in call to function \"" ++ a_name ++
+      "\": expected " ++ show (length params) ++ ", got " ++ show (length c) ++
+      "; line: " ++ show id_line ++ ", column: " ++ show id_col
+
+  -- inserindo parâmetros formais na tabela de símbolos
+  zipWithM_ (\(formal_name, formal_type, _) actual -> do
+    let actual_type = case actual of
+          Left (t, _) -> t
+          Right t     -> t
+    when (extract_base_type formal_type /= extract_base_type actual_type) $
+      error $ "type mismatch for parameter \"" ++ formal_name ++
+        "\" in call to function \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
+        show_pretty_type_values actual_type ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    ) params c
+
   s' <- getState
   result <- lift $ runParserTWithState stmts s' bodyTokens
+  
   (ret, new_state) <- case result of
     Left err -> error (show err)
     Right (Just return_val, new_state) ->
       if compare_type_base return_type return_val
         then return (return_val, new_state)
-        else error $ "type error: function \"" ++ show a_name ++ "\" expects type " ++ show_pretty_types return_type ++ 
+        else error $ "type error: function \"" ++ a_name ++ "\" expects return type " ++ show_pretty_types return_type ++
         ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
     Right (Nothing, _) -> error $ "function expects at least one return statement, but got none; " ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-  putState s
-  zipWithM_ (\(name, t1, passmode) param -> do
-      case (passmode, param) of
-        (ByValue, _) -> return ()
-        (ByReference, Right t) -> error "only variables may be passed by reference"
-        (ByReference, Left (_, toks)) -> do
-          updateState (symtable_update_by_access_chain toks (get_variable_value (Id name (line, column)) new_state))
+  
+  putState new_state
+  
+  zipWithM_ (\(name, _, passmode) param -> do
+    case (passmode, param) of
+      (ByValue, _) -> return ()
+      (ByReference, Right _) -> error $ "no literals may be used as by-reference parameters; line " ++ show id_line ++ ", column: " ++ show id_col
+      (ByReference, Left (_, toks)) -> do
+        case toks of
+          (tokFirst:_) -> do
+            mIsConst <- is_name_constant tokFirst
+            case mIsConst of
+              Just True -> error $ "actual parameter \"" ++ get_id_name tokFirst ++ "\" is declared as constant and cannot be passed by reference; line " ++ show id_line ++ ", column: " ++ show id_col
+              _ -> return ()
+          _ -> return () -- tokens vazios, ignora ou lance erro se quiser
+        updateState $
+          symtable_update_by_access_chain toks
+            (get_variable_value (Id name (line, column)) new_state)
     ) params c
+
+  -- remover os parâmetros locais da tabela de símbolos
+  let param_names = map (\(name, _, _) -> name) params
+  modifyState (remove_procedure_locals param_names)
+
   return ret
   <|> try scan_function
 
@@ -1310,7 +1324,7 @@ actual_params = do
   return (first : next)
 
 remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
-remaining_params = 
+remaining_params =
   (do
     a <- commaToken
     b <- actual_param
@@ -1320,12 +1334,12 @@ remaining_params =
   <|> return []
 
 actual_param :: ParsecT [Token] MemoryState IO (Either (Type, [Token]) Type)
-actual_param = 
+actual_param =
   try (do
     a <- access_chain
     lookAhead (commaToken <|> parenRightToken)
     return $ Left a
-  ) <|> 
+  ) <|>
   try (do
     Right <$> expression
   )
@@ -1678,7 +1692,7 @@ is_name_constant tok = do
   st <- getState
   let symtab = symtable st
   case tok of
-    Id name _ -> 
+    Id name _ ->
       return $ (\(_, _, is_var) -> Just (not is_var)) =<< find (\(n, _, _) -> n == name) symtab
     _ -> return Nothing
 
@@ -1702,7 +1716,7 @@ get_subprogram_name subprogram@(Procedure name _ _) = name
 get_subprogram_name subprogram@(Function name _ _ _) = name
 
 lookup_function :: Token -> [Subprogram] -> Subprogram
-lookup_function (Id name (line, column)) [] = error $ "undefined function \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_function (Id name (line, column)) [] = error $ "undefined function \"" ++ name ++ "\" in program; line " ++ show line ++ " column " ++ show column
 lookup_function token@(Id name (line, column)) (t : rest) = do
   let _ = traceShow "b" ();
   case t of
@@ -1712,7 +1726,7 @@ lookup_function token@(Id name (line, column)) (t : rest) = do
     _ -> lookup_function token rest
 
 lookup_procedure :: Token -> [Subprogram] -> Subprogram
-lookup_procedure (Id name (line, column)) [] = error $ "undefined procedure \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
+lookup_procedure (Id name (line, column)) [] = error $ "undefined procedure \"" ++ name ++ "\" in program; line " ++ show line ++ " column " ++ show column
 lookup_procedure token@(Id name (line, column)) (t : rest) = do
   let _ = traceShow "a" ();
   case t of
@@ -1801,10 +1815,10 @@ symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, i
     let MemoryState sym' typ' sub' exec' in_proc' = symtable_update (Id id_name pos, new_value) (MemoryState rest type_tab sub_tab exec in_procedure)
     in MemoryState ((name, old_value, is_var) : sym') typ' sub' exec' in_proc'
 
-remove_local_variables :: [String] -> MemoryState -> MemoryState
-remove_local_variables names st@(MemoryState sym type_table subprog exec in_procedure) =
-  let new_sym = filter (\(name, _, _) -> name `notElem` names) sym
-  in MemoryState new_sym type_table subprog exec in_procedure
+remove_procedure_locals :: [String] -> MemoryState -> MemoryState
+remove_procedure_locals names st =
+  let new_symtab = filter (\(n, _, _) -> n `notElem` names) (symtable st)
+  in st { symtable = new_symtab }
 
 is_main_four_type :: Type -> Bool
 is_main_four_type t = case t of

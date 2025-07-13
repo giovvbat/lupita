@@ -1,16 +1,13 @@
-function soma(c int, b int) int {
-    return c + b;
-}
+i int = 2;
 
-procedure example(r int) {
-    r = 7;
-    //return i;
+function mudanca(kjn bool) int {
+    i = 79823;
 }
 
 procedure main() {
-    a const int = 4;
-    //print(a);
-    //example(a);
-    kjdn guess = soma(a, a);
+    print(i);
+    exemplo const bool = false;
+    //print(mudanca(exemplo));
+    print(i);
 }
 
