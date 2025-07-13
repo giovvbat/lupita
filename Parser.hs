@@ -23,35 +23,35 @@ import System.Environment
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
 -- tipo e valor -> unificados
---
+
 -- runtime stack
---
+
 -- pilha dos escopos
---
+
 -- lista de tipos criados por usuário
 --
 -- tabela de subprogramas declarados
 -- nome, parametros, tipo de retorno e código
--- data SubP = Proc ... | Func ...
---
+
 -- flag se está executando
 -- falsa se está em declaração de subprograma
 -- verdadeira quando entra na main
 
--- Representa o modo de passagem de parâmetro: por valor ou por referência
+-- representa o modo de passagem de parâmetro: por valor ou por referência
 data PassMode = ByValue | ByReference
   deriving (Show, Eq)
 
 -- nome do parâmetro, tipo, modo de passagem
 type FormalParam = (String, Type, PassMode)
 
--- Tipo para distinguir função e procedimento
+-- tipo para distinguir função e procedimento
 data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam], proc_body :: [Token] } |
   Function { func_name :: String, func_params :: [FormalParam], func_return_type :: Type, func_body :: [Token] }
   deriving (Show, Eq)
 
 -- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
 type SymbolTable = [(String, Type, Bool)]
+type ScopedSymbolTable = [[(String, Type, Bool)]]
 
 data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
     deriving (Show, Eq)
@@ -1991,7 +1991,7 @@ main :: IO ()
 main = do
   args <- getArgs
   if null args
-    then putStrLn "Uso: seu_programa <nome_do_arquivo>"
+    then putStrLn "uso: seu_programa <nome_do_arquivo>"
     else do
       let filename = head args
       tokens <- getTokens filename

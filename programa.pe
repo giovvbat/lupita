@@ -1,19 +1,11 @@
 function mudanca(kjn int) int {
-    match (kjn) {
-        case 1:
-            x int;
-            return 1;
-        case 2:
-            p int = 7;
-            return p;
-        default:
-            y int;
-            return y;
-    }
+    repeat {
+        return 6;
+    } until (true);
 }
 
 procedure main() {
     kjnkjn int = 1;
-    print(mudanca(3));
+    //print(mudanca(99));
 }
 

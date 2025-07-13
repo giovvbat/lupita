@@ -63,13 +63,13 @@ alex Lexer.x
 Para compilar o parser (estrutura sintática e semântica):
 
 ```sh
-ghc Parser.hs -o parser -package array
+ghc Parser.hs -o parser
 ```
 
 Compilação de todo programa:
 
 ```sh
-alex Lexer.x && ghc Parser.hs -o parser -package array
+alex Lexer.x && ghc Parser.hs -o parser
 ```
 
 ### Execução
