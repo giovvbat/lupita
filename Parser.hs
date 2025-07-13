@@ -680,6 +680,12 @@ function = do
   h <- stmts
   after <- getInput
   j <- bracketRightToken
+
+  case h of
+    Nothing -> error $ "function \"" ++ name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column " ++ show col
+    Just t -> when (extract_base_type t /= extract_base_type f) $ error $ "type mismatch in return of function \"" ++ name ++ "\": expected " ++ 
+      show_pretty_types f ++ ", but got " ++ show_pretty_type_values t ++ "; line: " ++ show line ++ ", column " ++ show col
+  
   let body_tokens = take (length before - length after) before
   putState s
   updateState (subprogramtable_insert (Function name d f body_tokens) (line, col))
@@ -859,8 +865,9 @@ procedure_call = try $ do
           Right t     -> t
     when (extract_base_type formal_type /= extract_base_type actual_type) $
       error $ "type mismatch for parameter \"" ++ formal_name ++
-        "\" in call to procedure \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
+        "\" in call to function \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
         show_pretty_type_values actual_type ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    updateState (symtable_insert (Id formal_name (line, column), formal_type, True))
     ) params c
 
   s' <- getState
@@ -892,7 +899,7 @@ procedure_call = try $ do
 
   -- remover os parâmetros locais da tabela de símbolos
   let param_names = map (\(name, _, _) -> name) params
-  modifyState (remove_procedure_locals param_names)
+  modifyState (delete_variables param_names)
 
   <|> try print_procedure
 
@@ -1277,6 +1284,7 @@ function_call = try $ do
       error $ "type mismatch for parameter \"" ++ formal_name ++
         "\" in call to function \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
         show_pretty_type_values actual_type ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    updateState (symtable_insert (Id formal_name (line, column), actual_type, True))
     ) params c
 
   s' <- getState
@@ -1289,7 +1297,7 @@ function_call = try $ do
         then return (return_val, new_state)
         else error $ "type error: function \"" ++ a_name ++ "\" expects return type " ++ show_pretty_types return_type ++
         ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-    Right (Nothing, _) -> error $ "function expects at least one return statement, but got none; " ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
+    Right (Nothing, _) -> error $ "function \"" ++ a_name ++ "\" expects more return statements than provided; line: " ++ show id_line ++ ", column: " ++ show id_col
   
   putState new_state
   
@@ -1312,7 +1320,7 @@ function_call = try $ do
 
   -- remover os parâmetros locais da tabela de símbolos
   let param_names = map (\(name, _, _) -> name) params
-  modifyState (remove_procedure_locals param_names)
+  modifyState (delete_variables param_names)
 
   return ret
   <|> try scan_function
@@ -1815,8 +1823,8 @@ symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, i
     let MemoryState sym' typ' sub' exec' in_proc' = symtable_update (Id id_name pos, new_value) (MemoryState rest type_tab sub_tab exec in_procedure)
     in MemoryState ((name, old_value, is_var) : sym') typ' sub' exec' in_proc'
 
-remove_procedure_locals :: [String] -> MemoryState -> MemoryState
-remove_procedure_locals names st =
+delete_variables :: [String] -> MemoryState -> MemoryState
+delete_variables names st =
   let new_symtab = filter (\(n, _, _) -> n `notElem` names) (symtable st)
   in st { symtable = new_symtab }
 

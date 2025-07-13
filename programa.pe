@@ -1,13 +1,17 @@
-i int = 2;
-
 function mudanca(kjn bool) int {
-    i = 79823;
+    if (!kjn) {
+        x int;
+        return 1;
+    } else {
+        p int = 7;
+       return p;
+    }
 }
 
 procedure main() {
-    print(i);
-    exemplo const bool = false;
-    //print(mudanca(exemplo));
-    print(i);
+    kjnkjn int;
+    print(mudanca(true));
+    // era pra dar erro!
+    print(p);
 }
 
