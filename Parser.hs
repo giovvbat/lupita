@@ -1546,10 +1546,6 @@ match_case = do
   _ <- bracketLeftToken
   (return_type, matched_total) <- cases expr
   
-  unless matched_total $ 
-    error $ "match cases not exhaustive at line " ++ show line ++ " column " 
-            ++ show column ++  " ; no match for value " ++  show_pretty_type_values expr
-                                  
   h <- bracketRightToken
   return return_type
 
