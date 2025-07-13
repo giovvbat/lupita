@@ -18,6 +18,7 @@ import Data.Char (toLower)
 import Data.List (nub, (\\), find)
 import Control.Monad.Trans.Class (lift)
 import Debug.Trace (traceShow)
+import System.Environment
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
 -- nome -> tabela de simbolos junto com escopo escopo#nome
@@ -1954,8 +1955,13 @@ parser = runParserT program (MemoryState { symtable = [] , typetable = [], subpr
 
 main :: IO ()
 main = do
-  tokens <- getTokens "programa.pe"
-  result <- parser tokens
-  case result of
-    Left err -> print err
-    Right ans -> return ()
+  args <- getArgs
+  if null args
+    then putStrLn "Uso: seu_programa <nome_do_arquivo>"
+    else do
+      let filename = head args
+      tokens <- getTokens filename
+      result <- parser tokens
+      case result of
+        Left err -> print err
+        Right ans -> return ()
