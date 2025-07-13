@@ -1375,9 +1375,9 @@ while = do
   inputAfter <- getInput
   g <- bracketRightToken
   let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
-  when exec $ do
-    run_loop False condTokens bodyTokens (line, column)
-  return Nothing
+  if exec 
+    then run_loop False condTokens bodyTokens (line, column) Nothing
+    else return Nothing
 
 repeat_until :: ParsecT [Token] MemoryState IO (Maybe Type)
 repeat_until = do
@@ -1397,12 +1397,12 @@ repeat_until = do
     j <- semiColonToken
     let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
     let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
-    when exec $ do
-      run_loop True condTokens bodyTokens (line, column)
-    return Nothing
+    if exec 
+        then run_loop True condTokens bodyTokens (line, column) c
+        else return c
 
-run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> ParsecT [Token] MemoryState IO ()
-run_loop negateCondition condTokens bodyTokens (line, column) = do
+run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> (Maybe Type) -> ParsecT [Token] MemoryState IO (Maybe Type)
+run_loop negateCondition condTokens bodyTokens (line, column) previous_return = do
   state <- getState
   condResult <- lift $ runParserT expression state "" condTokens
   condBool <- case condResult of
@@ -1410,14 +1410,18 @@ run_loop negateCondition condTokens bodyTokens (line, column) = do
     Right condExpr -> case check_condition "while" (line, column) condExpr of
       Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
-  when condBool $ do
+  if condBool then do
     state' <- getState
     result <- lift $ runParserTWithState stmts state' bodyTokens
     case result of
       Left err -> error (show err)
-      Right (_, newState) -> do
+      Right (current_return, newState) -> do
         putState newState
-        run_loop negateCondition condTokens bodyTokens (line, column)
+        case current_return of
+            Just a -> return current_return
+            Nothing -> run_loop negateCondition condTokens bodyTokens (line, column) current_return
+    else
+        return previous_return
 
 for :: ParsecT [Token] MemoryState IO (Maybe Type)
 for = do
@@ -1480,20 +1484,17 @@ conditional = if_else <|> match_case
 if_else :: ParsecT [Token] MemoryState IO (Maybe Type)
 if_else = do
   (first, cond) <- cond_if
-  next <- cond_else cond
+  (has_else, next) <- cond_else cond
   
   returns_same_type <- case (first, next) of
     (Just a, Just b) -> return $ compare_type_base a b
-    (Just a, Nothing) -> return False
-    (Nothing, Just b) -> return False
-    (Nothing, Nothing) -> return False
+    (_, _) -> return False
   
-  if not returns_same_type then return Nothing
-    else
-    if cond then
-        return first
-        else
-        return next
+  if has_else && not returns_same_type
+    then return Nothing
+    else if cond 
+        then return first
+        else return next
 
 cond_if :: ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 cond_if = do
@@ -1521,7 +1522,7 @@ check_condition conditional_name (line, column) t =
   Left $ "type error in \"" ++ conditional_name ++ "\" condition: expected boolean, got " ++
     show_pretty_type_values t ++ "; line: " ++ show line ++ ", column: " ++ show column
 
-cond_else :: Bool -> ParsecT [Token] MemoryState IO (Maybe Type)
+cond_else :: Bool -> ParsecT [Token] MemoryState IO (Bool, Maybe Type)
 cond_else if_cond =
   (do
     exec <- executing <$> getState
@@ -1532,9 +1533,9 @@ cond_else if_cond =
     c <- stmts
     d <- bracketRightToken
     updateState (\st -> st { executing = exec })
-    return c
+    return (True, c)
   )
-  <|> return Nothing
+  <|> return (False, Nothing)
 
 match_case :: ParsecT [Token] MemoryState IO (Maybe Type)
 match_case = do
