@@ -877,18 +877,16 @@ assign = try $ do
       new_value = assign_function (line, col) access_type b
   if access_base_type == expr_base_type
     then do
-      -- when (executing s) $
-      --  updateState (symtable_update_by_access_chain token_chain new_value)
+      when (executing s) $
+       updateState (symtable_update_by_access_chain token_chain new_value)
       return Nothing
     else
       error $ assign_type_error_msg access_type b (line, col)
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call = try $ do
-  -- Parse do nome da procedure chamada
   Id proc_name (line, col) <- idToken
   
-  -- Verifica se a procedure está na tabela de subprogramas
   st <- getState
   let maybe_proc = find (\sp -> case sp of
                                   Procedure name _ _ -> name == proc_name
@@ -897,30 +895,50 @@ procedure_call = try $ do
     Nothing -> fail $ "procedure \"" ++ proc_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
     Just (Procedure _ params body_tokens) -> do
       
-      -- Parse dos argumentos passados na chamada
       parenLeftToken
-      args <- actual_params <|> return []  -- sua função que parseia a lista de argumentos
+      args <- actual_params <|> return []
       parenRightToken
       semiColonToken
       
-      -- Verifica se número de args bate com params
       when (length args /= length params) $
         fail $ "wrong number of arguments in call to " ++ proc_name
       
-      -- Cria ActivationRecord para essa chamada
       let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
       
-      -- Atualiza o estado com o novo AR na call_stack
       let st' = st { call_stack = new_ar : call_stack st, current_scope = LocalScope }
       putState st'
       
-      forM_ (zip params args) $ \((param_name, typ, _), arg_token) -> (do
-        let actual_type = case arg_token of
+      zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
+        let actual_type = case actual of
               Left (t, _) -> t
               Right t     -> t
-        st'' <- getState
-        let sym = (param_name, actual_type, True)
-        putState $ local_insert sym (line, col) st'')
+
+        when (extract_base_type formal_type /= extract_base_type actual_type) $
+          error $ "type mismatch for parameter \"" ++ formal_name ++
+            "\" in call to function \"" ++ proc_name ++ "\": expected " ++ show_pretty_types formal_type ++
+            ", got " ++ show_pretty_type_values actual_type ++ "; line: " ++ show line ++ ", column: " ++ show col
+
+        case passmode of
+          ByReference ->
+            case actual of
+              Left (t, tok) ->
+                case tok of
+                  (tokFirst:_) -> do
+                    mIsConst <- is_name_constant tokFirst
+                    case mIsConst of
+                      Just True ->
+                        error $ "actual parameter \"" ++ get_id_name tokFirst ++
+                          "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
+                      _ -> return ()
+                  _ -> return ()
+              Right _ ->
+                error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
+          ByValue ->
+            return ()
+
+        updateState (insert_symbol (formal_name, formal_type, True) (line, col))
+        ) params args
+
       
       s' <- getState
       result <- lift $ runParserTWithState stmts s' body_tokens
@@ -928,12 +946,21 @@ procedure_call = try $ do
       new_state <- case result of
         Left err -> error (show err)
         Right (_, st') -> return st'
-      
-      -- Após execução, desempilha o AR (fecha escopo local)
+
       stFinal <- getState
       case call_stack stFinal of
         [] -> error "call_stack unexpectedly empty after procedure call"
         (_ : rest) -> putState $ stFinal { call_stack = rest, current_scope = GlobalScope }
+
+      zipWithM_ (\(name, _, passmode) param -> do
+        case (passmode, param) of
+          (ByValue, _) -> return ()
+          (ByReference, Right _) -> return ()
+          (ByReference, Left (_, toks)) -> do
+            updateState $
+              symtable_update_by_access_chain toks
+                (lookup_variable (Id name (line, col)) new_state)
+        ) params args
   <|> try print_procedure
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
@@ -1435,6 +1462,7 @@ repeat_until = do
 
 run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> (Maybe Type) -> ParsecT [Token] MemoryState IO (Maybe Type)
 run_loop negateCondition condTokens bodyTokens (line, column) previous_return = do
+  updateState enter_scope
   state <- getState
   condResult <- lift $ runParserT expression state "" condTokens
   condBool <- case condResult of
@@ -1442,7 +1470,7 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
     Right condExpr -> case check_condition "while" (line, column) condExpr of
       Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
-  if condBool then do
+  return_val <- if condBool then do
     state' <- getState
     result <- lift $ runParserTWithState stmts state' bodyTokens
     case result of
@@ -1454,6 +1482,8 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
             Nothing -> run_loop negateCondition condTokens bodyTokens (line, column) current_return
     else
         return previous_return
+  updateState exit_scope
+  return return_val
 
 for :: ParsecT [Token] MemoryState IO (Maybe Type)
 for = do
@@ -1542,7 +1572,9 @@ cond_if = do
       unless cond $ updateState (\st -> st { executing = False })
       return cond
   e <- bracketLeftToken
+  updateState enter_scope
   return_type <- stmts
+  updateState exit_scope
   g <- bracketRightToken
   updateState (\st -> st { executing = exec })
   return (return_type, condBool)
@@ -1562,7 +1594,9 @@ cond_else if_cond =
     b <- bracketLeftToken
     when if_cond $
       updateState (\st -> st { executing = False })
+    updateState enter_scope
     c <- stmts
+    updateState exit_scope
     d <- bracketRightToken
     updateState (\st -> st { executing = exec })
     return (True, c)
@@ -1921,73 +1955,127 @@ insert_symbol sym (line, column) st =
         
 local_insert :: Symbol -> (Int, Int) -> MemoryState -> MemoryState
 local_insert symbol@(name, _, _) (line, column) st =
-    case call_stack st of
+  case call_stack st of
     [] -> error "internal error: no active scope to insert variable"
     (ar : rest) ->
-        case local_symbols ar of
+      case local_symbols ar of
         [] -> error "internal error: no local scopes found in current activation record"
-        (scope : other_scopes) ->
-            let declared_names = [n | (n, _, _) <- scope] in
-            if name `elem` declared_names
-            then error $ "variable \"" ++ name ++ "\" already declared in this scope; line: " ++ show line ++ ", column: " ++ show column
-            else
-                let updated_scope = symbol : scope
-                    updated_locals = updated_scope : other_scopes
-                    updated_ar = ar { local_symbols = updated_locals }
-                in st { call_stack = updated_ar : rest }
+        scopes ->
+          let
+            in_local = any (elemName name) scopes
+            in_global = any (\(n, _, _) -> n == name) (globals st)
+          in
+            if in_local || in_global
+              then error $ "variable \"" ++ name ++ "\" already declared in scope (local or global); line: " ++ show line ++ ", column: " ++ show column
+              else
+                let (currentScope : otherScopes) = scopes
+                    updatedScope = symbol : currentScope
+                    updatedLocals = updatedScope : otherScopes
+                    updatedAR = ar { local_symbols = updatedLocals }
+                in st { call_stack = updatedAR : rest }
+  where
+    elemName :: String -> [Symbol] -> Bool
+    elemName n = any (\(name', _, _) -> name' == n)
 
--- atualiza o valor na tabela de símbolos usando uma cadeia de acesso
--- symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
--- symtable_update_by_access_chain [] _ st = st -- cadeia vazia, nada a fazer
--- symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
--- symtable_update_by_access_chain (Id base_name pos : rest) new_val st@(MemoryState sym_table type_table subprogram_table executing in_procedure) =
---   case lookup base_name [(n, v) | (n, v, _) <- sym_table] of
---     Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
---     Just base_type ->
---       let updated_type = update_nested_type base_type rest new_val pos
---           updated_sym_table = update_entry base_name updated_type sym_table
---       in st { symtable = updated_sym_table }
--- symtable_update_by_access_chain _ _ st = st -- fallback seguro
+-- Atualiza uma variável (ou campo aninhado) pela cadeia de acesso no estado atual
+symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
+symtable_update_by_access_chain [] _ st = st  -- nada a fazer
+symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
+symtable_update_by_access_chain (Id base_name pos : rest) new_val st =
+  -- Procura na localSymbols do topo do call_stack
+  case call_stack st of
+    [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name
+    (ar : restStack) ->
+      let localScopes = local_symbols ar
+          -- procura a variável base_name em algum escopo local (busca da mais interna para mais externa)
+          foundLocal = findSymbolInScopes base_name localScopes
+          -- função auxiliar pra atualizar no localSymbols
+          updatedLocals = case foundLocal of
+            Nothing -> localScopes  -- não atualiza localSymbols se não achar local
+            Just _  -> updateSymbolInScopes base_name (updateNestedTypeInSymbol rest new_val pos) localScopes
+      in
+        case foundLocal of
+          Just oldType ->
+            -- atualiza o ActivationRecord com a nova lista de locais atualizada
+            let updatedAR = ar { local_symbols = updatedLocals }
+                st' = st { call_stack = updatedAR : restStack }
+            in st'
+          Nothing -> 
+            -- se não achou localmente, tenta atualizar nas globais
+            case lookup base_name [(n, v) | (n, v, _) <- globals st] of
+              Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+              Just baseType ->
+                let updatedType = update_nested_type baseType rest new_val pos
+                    updatedGlobals = updateEntry base_name updatedType (globals st)
+                in st { globals = updatedGlobals }
+symtable_update_by_access_chain _ _ st = st -- fallback seguro
 
--- update_nested_type :: Type -> [Token] -> Type -> (Int, Int) -> Type
--- update_nested_type (Record name fields) (Id field_name _ : rest) new_val pos =
---   Record name $ map (\(fname, ftype) ->
---     if fname == field_name then
---       if null rest then (fname, new_val)
---       else (fname, update_nested_type ftype rest new_val pos)
---     else (fname, ftype)) fields
--- update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val pos =
---   Enumeration name $ map (\(lname, ltype) ->
---     if lname == label_name then
---       if null rest then (lname, new_val)
---       else (lname, update_nested_type ltype rest new_val pos)
---     else (lname, ltype)) fields
--- update_nested_type t (_:_) _ (line, col) =
---   error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++ "; line " ++ show line ++ ", column " ++ show col
+-- Função auxiliar: procura símbolo pelo nome nas listas de escopos (da mais interna para a mais externa)
+findSymbolInScopes :: String -> [[Symbol]] -> Maybe Type
+findSymbolInScopes _ [] = Nothing
+findSymbolInScopes name (scope:rest) =
+  case lookup name [(n, t) | (n, t, _) <- scope] of
+    Just typ -> Just typ
+    Nothing -> findSymbolInScopes name rest
 
--- update_entry :: String -> Type -> SymbolTable -> SymbolTable
--- update_entry _ _ [] = []
--- update_entry name new_val ((n, t, is_var) : rest)
---   | n == name =
---     if not is_var then error $ "cannot assign to constant \"" ++ name ++ "\""
---     else (n, new_val, is_var) : rest
---   | otherwise = (n, t, is_var) : update_entry name new_val rest
+-- Atualiza o tipo de um símbolo na lista de escopos (somente primeiro escopo onde encontrar o símbolo)
+updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
+updateSymbolInScopes _ _ [] = []
+updateSymbolInScopes name f (scope:rest) =
+  if any (\(n, _, _) -> n == name) scope
+    then map (\(n, t, isVar) -> if n == name then (n, f t, isVar) else (n, t, isVar)) scope : rest
+    else scope : updateSymbolInScopes name f rest
 
--- symtable_update :: (Token, Type) -> MemoryState -> MemoryState
--- symtable_update (Id id_name (line, column), _) (MemoryState [] _ _ _ _) =
---   error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show line ++ " column " ++ show column
--- symtable_update (Id id_name pos, new_value) st@(MemoryState ((name, old_value, is_var) : rest) type_tab sub_tab exec in_procedure)
---   | id_name == name =
---     if not is_var then error $ "cannot assign to constant \"" ++ id_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
---     else st { symtable = (id_name, new_value, is_var) : rest }
---   | otherwise =
---     let MemoryState sym' typ' sub' exec' in_proc' = symtable_update (Id id_name pos, new_value) (MemoryState rest type_tab sub_tab exec in_procedure)
---     in MemoryState ((name, old_value, is_var) : sym') typ' sub' exec' in_proc'
+update_nested_type :: Type -> [Token] -> Type -> (Int, Int) -> Type
+update_nested_type (Record name fields) (Id field_name _ : rest) new_val pos =
+  Record name $ map (\(fname, ftype) ->
+    if fname == field_name then
+      if null rest then (fname, new_val)
+      else (fname, update_nested_type ftype rest new_val pos)
+    else (fname, ftype)) fields
+update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val pos =
+  Enumeration name $ map (\(lname, ltype) ->
+    if lname == label_name then
+      if null rest then (lname, new_val)
+      else (lname, update_nested_type ltype rest new_val pos)
+    else (lname, ltype)) fields
+update_nested_type t (_:_) _ (line, col) =
+  error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++ "; line " ++ show line ++ ", column " ++ show col
 
--- delete_variables :: [String] -> MemoryState -> MemoryState
--- delete_variables names st =
---   let new_symtab = filter (\(n, _, _) -> n `notElem` names) (symtable st)
---   in st { symtable = new_symtab }
+-- Atualiza o tipo aninhado de um símbolo (tipo -> tipo atualizado)
+updateNestedTypeInSymbol :: [Token] -> Type -> (Int, Int) -> Type -> Type
+updateNestedTypeInSymbol tokens newVal pos oldType = update_nested_type oldType tokens newVal pos
+
+-- Atualiza a lista de símbolos (globals) com novo tipo para variável
+updateEntry :: String -> Type -> [Symbol] -> [Symbol]
+updateEntry _ _ [] = []
+updateEntry name newVal ((n, t, isVar) : rest)
+  | n == name =
+    if not isVar then error $ "cannot assign to constant \"" ++ name ++ "\""
+    else (n, newVal, isVar) : rest
+  | otherwise = (n, t, isVar) : updateEntry name newVal rest
+
+-- Atualiza variável simples (sem cadeia de acesso) nas variáveis locais e globais
+symtable_update :: (Token, Type) -> MemoryState -> MemoryState
+symtable_update (Id id_name pos, new_value) st =
+  case call_stack st of
+    [] -> error $ "no activation record; variable \"" ++ id_name ++ "\" not found"
+    (ar : restStack) ->
+      let localScopes = local_symbols ar
+          foundLocal = findSymbolInScopes id_name localScopes
+      in case foundLocal of
+        Just oldType ->
+          let updatedLocals = updateSymbolInScopes id_name (const new_value) localScopes
+              updatedAR = ar { local_symbols = updatedLocals }
+          in st { call_stack = updatedAR : restStack }
+        Nothing ->
+          -- não achou local, tenta globais
+          case lookup id_name [(n, t) | (n, t, _) <- globals st] of
+            Nothing -> error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+            Just oldType ->
+              let updatedGlobals = updateEntry id_name new_value (globals st)
+              in st { globals = updatedGlobals }
+symtable_update _ st = st  -- fallback
 
 is_main_four_type :: Type -> Bool
 is_main_four_type t = case t of

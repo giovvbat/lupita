@@ -1,11 +1,11 @@
-b int = 50;
-
-procedure a(x int) {
+procedure a(&x int) {
     print(x);
+    x = 5;
 }
 
 procedure main() {
-    teste int = 5;
+    teste const int = 4;
     a(teste);
+    print(teste);
 }
 
