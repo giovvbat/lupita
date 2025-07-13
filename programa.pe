@@ -1,11 +1,5 @@
-function mudanca(kjn int) int {
-    repeat {
-        return 6;
-    } until (true);
-}
-
 procedure main() {
-    kjnkjn int = 1;
-    //print(mudanca(99));
+    print("aaaa");
+    return "oi";
 }
 

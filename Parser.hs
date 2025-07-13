@@ -44,24 +44,33 @@ data PassMode = ByValue | ByReference
 -- nome do parâmetro, tipo, modo de passagem
 type FormalParam = (String, Type, PassMode)
 
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
+    deriving (Show, Eq)
+
 -- tipo para distinguir função e procedimento
 data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam], proc_body :: [Token] } |
   Function { func_name :: String, func_params :: [FormalParam], func_return_type :: Type, func_body :: [Token] }
   deriving (Show, Eq)
 
 -- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
-type SymbolTable = [(String, Type, Bool)]
-type ScopedSymbolTable = [[(String, Type, Bool)]]
+type Symbol = (String, Type, Bool)
+type SymbolTable = [Symbol]
+type ScopedSymbolTable = [[Symbol]]
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
-    deriving (Show, Eq)
+data ActivationRecord = ActivationRecord {
+  local_symbols :: [[Symbol]],               -- pilha de escopos locais (escopo mais recente é o head)
+  static_link :: Maybe ActivationRecord      -- referência estática para o escopo onde foi definido
+}
 
 data MemoryState = MemoryState {
-  symtable :: SymbolTable,
-  typetable :: [Type],
-  subprogramtable :: [Subprogram],
-  executing :: Bool,
-  in_procedure :: Bool
+  -- globals :: [Symbol],                -- variáveis globais
+  -- call_stack :: [ActivationRecord],   -- pilha de registros de ativação (funções/procedimentos em execução)
+  symtable :: [(String, Type, Bool)],
+  typetable :: [Type],                -- tabela de tipos
+  subprogramtable :: [Subprogram],    -- tabela de funções e procedimentos declarados
+  executing :: Bool,                  -- flag de execução
+  in_procedure :: Bool               -- flag usada pra validar `return`
+  -- current_scope :: ScopeType          -- escopo atual: global ou local
 }
 
 -- parsers para os tokens
@@ -633,12 +642,16 @@ m = do
   s <- getState
   putState s {executing = True}
   a <- procedureToken
-  b <- mainToken
+  b@(Main (line, col)) <- mainToken
   c <- parenLeftToken
   d <- params
   e <- parenRightToken
   f <- bracketLeftToken
   g <- stmts
+  case g of
+    Just typ -> error $ "\"main\" procedure does not expect return statements, but found return type " ++ show_pretty_type_values typ ++ "; line: "
+      ++ show line ++ ", column: " ++ show col
+    Nothing -> pure ()
   h <- bracketRightToken
   return [a]
 
