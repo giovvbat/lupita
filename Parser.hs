@@ -1481,10 +1481,19 @@ if_else :: ParsecT [Token] MemoryState IO (Maybe Type)
 if_else = do
   (first, cond) <- cond_if
   next <- cond_else cond
-  if cond then
-    return first
+  
+  returns_same_type <- case (first, next) of
+    (Just a, Just b) -> return $ compare_type_base a b
+    (Just a, Nothing) -> return False
+    (Nothing, Just b) -> return False
+    (Nothing, Nothing) -> return False
+  
+  if not returns_same_type then return Nothing
     else
-      return next
+    if cond then
+        return first
+        else
+        return next
 
 cond_if :: ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 cond_if = do
@@ -1530,12 +1539,17 @@ cond_else if_cond =
 match_case :: ParsecT [Token] MemoryState IO (Maybe Type)
 match_case = do
   exec <- executing <$> getState
-  a <- matchToken
-  b <- parenLeftToken
+  Match (line, column) <- matchToken
+  _ <- parenLeftToken
   expr <- expression
-  d <- parenRightToken
-  e <- bracketLeftToken
-  (return_type, f) <- cases expr
+  _ <- parenRightToken
+  _ <- bracketLeftToken
+  (return_type, matched_total) <- cases expr
+  
+  unless matched_total $ 
+    error $ "match cases not exhaustive at line " ++ show line ++ " column " 
+            ++ show column ++  " ; no match for value " ++  show_pretty_type_values expr
+                                  
   h <- bracketRightToken
   return return_type
 
@@ -1545,18 +1559,42 @@ cases expr =
   <|>
   try (do
     (a, matched_first) <- single_case expr False
-    remaining_cases expr matched_first
+    (has_next, b, matched_total) <- remaining_cases expr matched_first
+
+
+    let return_value = if matched_first then a else b
+
+    returns_same_type <- case (a, b) of
+        (Just a, Just b) -> return $ compare_type_base a b
+        (_, _) -> return False
+
+    if has_next && not returns_same_type
+        then return (Nothing, matched_total)
+        else return (return_value, matched_total)
   )
 
-remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
+remaining_cases :: Type -> Bool -> ParsecT [Token] MemoryState IO (Bool, Maybe Type, Bool)
 remaining_cases expr matched =
-  try $ default_case matched
+  try (do
+    (return_type, matched') <- default_case matched
+    return (True, return_type, matched')
+  )
   <|>
   try (do
-    (a, matched_current) <- single_case expr matched
-    remaining_cases expr matched_current
+    (first, matched_current) <- single_case expr matched
+    (has_next, next, matched_total) <- remaining_cases expr matched_current
+
+    let return_value = if matched_current then first else next
+
+    returns_same_type <- case (first, next) of
+      (Just a, Just b) -> return $ compare_type_base a b
+      (_, _) -> return False
+
+    if has_next && not returns_same_type
+        then return (True, Nothing, matched_total)
+        else return (True, return_value, matched_total)
   )
-  <|> return (Nothing, matched)
+  <|> return (False, Nothing, matched)
 
 single_case :: Type -> Bool -> ParsecT [Token] MemoryState IO (Maybe Type, Bool)
 single_case expr matched = do
@@ -1568,7 +1606,7 @@ single_case expr matched = do
     updateState (\st -> st { executing = False });
   d <- stmts
   updateState (\st -> st { executing = exec })
-  return (d ,cond || matched)
+  return (d, cond || matched)
 
 case_expression :: Type -> ParsecT [Token] MemoryState IO Bool
 case_expression expr =

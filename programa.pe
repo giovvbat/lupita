@@ -1,17 +1,19 @@
-function mudanca(kjn bool) int {
-    if (!kjn) {
-        x int;
-        return 1;
-    } else {
-        p int = 7;
-       return p;
+function mudanca(kjn int) int {
+    match (kjn) {
+        case 1:
+            x int;
+            return 1;
+        case 2:
+            p int = 7;
+            return p;
+        default:
+            y int;
+            return y;
     }
 }
 
 procedure main() {
-    kjnkjn int;
-    print(mudanca(true));
-    // era pra dar erro!
-    print(p);
+    kjnkjn int = 1;
+    print(mudanca(3));
 }
 
