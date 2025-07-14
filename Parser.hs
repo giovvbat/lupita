@@ -60,9 +60,10 @@ type ScopedSymbolTable = [[Symbol]]
 data ActivationRecord = ActivationRecord {
   local_symbols :: [[Symbol]],               -- pilha de escopos locais (escopo mais recente é o head)
   static_link :: Maybe ActivationRecord      -- referência estática para o escopo onde foi definido
-}
+} deriving (Show, Eq)
 
 data ScopeType = GlobalScope | LocalScope
+  deriving (Show, Eq)
 
 data MemoryState = MemoryState {
   globals :: [Symbol],                -- variáveis globais
@@ -72,7 +73,7 @@ data MemoryState = MemoryState {
   executing :: Bool,                  -- flag de execução
   in_procedure :: Bool,               -- flag usada pra validar `return`
   current_scope :: ScopeType          -- escopo atual: global ou local
-}
+} deriving (Show, Eq)
 
 -- parsers para os tokens
 
@@ -1483,7 +1484,9 @@ repeat_until = do
     a <- repeatToken
     b <- bracketLeftToken
     inputBefore <- getInput
+    updateState enter_scope
     c <- stmts
+    updateState exit_scope
     inputAfter <- getInput
     d <- bracketRightToken
     e <- untilToken
@@ -1506,22 +1509,26 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
   condResult <- lift $ runParserT expression state "" condTokens
   condBool <- case condResult of
     Left parseErr -> error (show parseErr)
-    Right condExpr -> case check_condition "while" (line, column) condExpr of
+    Right condExpr -> case check_condition "loop" (line, column) condExpr of
       Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
-  return_val <- if condBool then do
-    state' <- getState
-    result <- lift $ runParserTWithState stmts state' bodyTokens
-    case result of
-      Left err -> error (show err)
-      Right (current_return, newState) -> do
-        putState newState
-        case current_return of
-            Just a -> return current_return
-            Nothing -> run_loop negateCondition condTokens bodyTokens (line, column) current_return
-    else
-        return previous_return
-  updateState exit_scope
+  
+  return_val <- if condBool
+    then do
+      state' <- getState
+      result <- lift $ runParserTWithState stmts state' bodyTokens
+      case result of
+        Left err -> error (show err)
+        Right (current_return, newState) -> do
+          putState newState
+          updateState exit_scope
+          case current_return of
+              Just a -> return current_return
+              Nothing -> run_loop negateCondition condTokens bodyTokens (line, column) current_return
+    else do
+      updateState exit_scope
+      return previous_return
+
   return return_val
 
 for :: ParsecT [Token] MemoryState IO (Maybe Type)
