@@ -1,11 +1,16 @@
-procedure a(&x int) {
-    print(x);
-    x = 5;
+b int = 50;
+
+procedure a(b string) {
+    //b int = 30;
+    x int = 3;
+    print(b);
+    y = "123";
 }
 
 procedure main() {
-    teste const int = 4;
-    a(teste);
-    print(teste);
+    //b int;
+    x string = "aslkdj";
+    a(x);
+    print(b);
 }
 

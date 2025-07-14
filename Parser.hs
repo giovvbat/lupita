@@ -663,23 +663,18 @@ subprograms = try function <|> try procedure
 procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
   original_state <- getState
-  -- ativa flag in_procedure
   let flaggedState = original_state { in_procedure = True }
   
-  -- abre novo ActivationRecord na call_stack, com escopo local vazio
   let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing } 
   putState flaggedState { call_stack = newAR : call_stack flaggedState, current_scope = LocalScope }
 
-  -- parse tokens básicos do procedure
   a <- procedureToken
   b@(Id name (line, col)) <- idToken
   c@(ParenLeft (paramline, paramcol)) <- parenLeftToken
-  d <- params  -- lista de parâmetros: [(String, Type, PassMode)]
+  d <- params
   
-  -- insere parâmetros no escopo local atual
   mapM_ (\(param_name, typ, passmode) -> do
             st <- getState
-            -- monta o Symbol: variável com is_variable=True
             let sym = (param_name, typ, True)
             updateState $ local_insert sym (line, col)
         ) d
@@ -688,12 +683,11 @@ procedure = do
   f <- bracketLeftToken
   
   before <- getInput
-  g <- stmts  -- parseia o corpo
+  g <- stmts
   
   after <- getInput
   h <- bracketRightToken
 
-  -- retira o ActivationRecord da pilha ao sair do procedure
   st1 <- getState
   let cs = call_stack st1
   case cs of
@@ -709,27 +703,41 @@ procedure = do
 
 function :: ParsecT [Token] MemoryState IO [Token]
 function = do
-  s <- getState
+  original_state <- getState
+
+  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing } 
+  putState original_state { call_stack = newAR : call_stack original_state, current_scope = LocalScope }
+
   a <- functionToken
   b@(Id name (line, col)) <- idToken
   c@(ParenLeft (paramline, paramcol)) <- parenLeftToken
   d <- params
-  -- mapM_ (\(tok, typ, pass) -> updateState (symtable_insert (Id tok (paramline, paramcol), typ, True))) d
+
+  mapM_ (\(tok, typ, pass) -> updateState (local_insert (tok, typ, True) (line, col))) d
+
   e <- parenRightToken
   f <- all_possible_type_tokens
   g <- bracketLeftToken
+
   before <- getInput
   h <- stmts
+
   after <- getInput
   j <- bracketRightToken
 
+  st1 <- getState
+  let cs = call_stack st1
+  case cs of
+    [] -> error "call_stack unexpectedly empty when exiting function"
+    (_ar : rest) -> putState $ st1 { call_stack = rest, current_scope = GlobalScope }
+  
   case h of
     Nothing -> error $ "function \"" ++ name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column " ++ show col
     Just t -> when (extract_base_type t /= extract_base_type f) $ error $ "type mismatch in return of function \"" ++ name ++ "\": expected " ++ 
       show_pretty_types f ++ ", but got " ++ show_pretty_type_values t ++ "; line: " ++ show line ++ ", column " ++ show col
   
   let body_tokens = take (length before - length after) before
-  putState s
+
   updateState (subprogramtable_insert (Function name d f body_tokens) (line, col))
   return [a]
 
@@ -886,13 +894,15 @@ assign = try $ do
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call = try $ do
   Id proc_name (line, col) <- idToken
+
+  lookAhead parenLeftToken
   
   st <- getState
   let maybe_proc = find (\sp -> case sp of
                                   Procedure name _ _ -> name == proc_name
                                   _ -> False) (subprogramtable st)
   case maybe_proc of
-    Nothing -> fail $ "procedure \"" ++ proc_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
+    Nothing -> error $ "procedure \"" ++ proc_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
     Just (Procedure _ params body_tokens) -> do
       
       parenLeftToken
@@ -901,14 +911,36 @@ procedure_call = try $ do
       semiColonToken
       
       when (length args /= length params) $
-        fail $ "wrong number of arguments in call to " ++ proc_name
+        error $ "incorrect number of arguments in call to procedure \"" ++ proc_name ++
+          "\": expected " ++ show (length params) ++ ", got " ++ show (length args) ++
+          "; line: " ++ show line ++ ", column: " ++ show col
+
+      zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
+          case passmode of
+            ByReference ->
+              case actual of
+                Left (t, tok) ->
+                  case tok of
+                    (tokFirst:_) -> do
+                      mIsConst <- is_name_constant tokFirst
+                      case mIsConst of
+                        Just True ->
+                          error $ "actual parameter \"" ++ get_id_name tokFirst ++
+                            "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
+                        _ -> return ()
+                    _ -> return ()
+                Right _ ->
+                  error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
+            ByValue ->
+              return ()
+        ) params args
       
       let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
       
-      let st' = st { call_stack = new_ar : call_stack st, current_scope = LocalScope }
+      let st' = st { call_stack = new_ar : call_stack st }
       putState st'
       
-      zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
+      zipWithM_ (\(formal_name, formal_type, _) actual -> do
         let actual_type = case actual of
               Left (t, _) -> t
               Right t     -> t
@@ -918,25 +950,7 @@ procedure_call = try $ do
             "\" in call to function \"" ++ proc_name ++ "\": expected " ++ show_pretty_types formal_type ++
             ", got " ++ show_pretty_type_values actual_type ++ "; line: " ++ show line ++ ", column: " ++ show col
 
-        case passmode of
-          ByReference ->
-            case actual of
-              Left (t, tok) ->
-                case tok of
-                  (tokFirst:_) -> do
-                    mIsConst <- is_name_constant tokFirst
-                    case mIsConst of
-                      Just True ->
-                        error $ "actual parameter \"" ++ get_id_name tokFirst ++
-                          "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
-                      _ -> return ()
-                  _ -> return ()
-              Right _ ->
-                error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
-          ByValue ->
-            return ()
-
-        updateState (insert_symbol (formal_name, formal_type, True) (line, col))
+        updateState (insert_symbol (formal_name, actual_type, True) (line, col))
         ) params args
 
       
@@ -947,10 +961,9 @@ procedure_call = try $ do
         Left err -> error (show err)
         Right (_, st') -> return st'
 
-      stFinal <- getState
-      case call_stack stFinal of
+      case call_stack s' of
         [] -> error "call_stack unexpectedly empty after procedure call"
-        (_ : rest) -> putState $ stFinal { call_stack = rest, current_scope = GlobalScope }
+        (_ : rest) -> putState $ new_state { call_stack = rest }
 
       zipWithM_ (\(name, _, passmode) param -> do
         case (passmode, param) of
@@ -1321,68 +1334,94 @@ access_from_user_defined_types_fields type_name entries _ = do
 
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call = try $ do
-  a@(Id a_name (id_line, id_col)) <- idToken
-  b@(ParenLeft (line, column)) <- parenLeftToken
-  c <- actual_params <|> return []
-  d <- parenRightToken
-  s <- getState
+  Id function_name (line, col) <- idToken
 
-  let (Function _ params return_type bodyTokens) = lookup_function a (subprogramtable s)
-  
-  -- verificar aridade
-  when (length c /= length params) $
-    error $ "incorrect number of arguments in call to function \"" ++ a_name ++
-      "\": expected " ++ show (length params) ++ ", got " ++ show (length c) ++
-      "; line: " ++ show id_line ++ ", column: " ++ show id_col
+  lookAhead parenLeftToken
 
-  -- inserindo parâmetros formais na tabela de símbolos
-  -- zipWithM_ (\(formal_name, formal_type, _) actual -> do
-  --   let actual_type = case actual of
-  --         Left (t, _) -> t
-  --         Right t     -> t
-  --   when (extract_base_type formal_type /= extract_base_type actual_type) $
-  --     error $ "type mismatch for parameter \"" ++ formal_name ++
-  --       "\" in call to function \"" ++ a_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
-  --       show_pretty_type_values actual_type ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-  --   updateState (symtable_insert (Id formal_name (line, column), actual_type, True))
-  --   ) params c
+  st <- getState
+  let maybe_func = find (\sp -> case sp of
+                                  Function name _ _ _ -> name == function_name
+                                  _ -> False) (subprogramtable st)
 
-  s' <- getState
-  result <- lift $ runParserTWithState stmts s' bodyTokens
-  
-  (ret, new_state) <- case result of
-    Left err -> error (show err)
-    Right (Just return_val, new_state) ->
-      if compare_type_base return_type return_val
-        then return (return_val, new_state)
-        else error $ "type error: function \"" ++ a_name ++ "\" expects return type " ++ show_pretty_types return_type ++
-        ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show id_line ++ ", column: " ++ show id_col
-    Right (Nothing, _) -> error $ "function \"" ++ a_name ++ "\" expects more return statements than provided; line: " ++ show id_line ++ ", column: " ++ show id_col
-  
-  putState new_state
-  
-  -- zipWithM_ (\(name, _, passmode) param -> do
-  --   case (passmode, param) of
-  --     (ByValue, _) -> return ()
-  --     (ByReference, Right _) -> error $ "no literals may be used as by-reference parameters; line " ++ show id_line ++ ", column: " ++ show id_col
-  --     (ByReference, Left (_, toks)) -> do
-  --       case toks of
-  --         (tokFirst:_) -> do
-  --           mIsConst <- is_name_constant tokFirst
-  --           case mIsConst of
-  --             Just True -> error $ "actual parameter \"" ++ get_id_name tokFirst ++ "\" is declared as constant and cannot be passed by reference; line " ++ show id_line ++ ", column: " ++ show id_col
-  --             _ -> return ()
-  --         _ -> return () -- tokens vazios, ignora ou lance erro se quiser
-  --       updateState $
-  --         symtable_update_by_access_chain toks
-  --           (get_variable_value (Id name (line, column)) new_state)
-  --   ) params c
+  case maybe_func of
+    Nothing -> error $ "function \"" ++ function_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
+    Just (Function _ params return_type body_tokens) -> do
 
-  -- remover os parâmetros locais da tabela de símbolos
-  let param_names = map (\(name, _, _) -> name) params
-  -- modifyState (delete_variables param_names)
 
-  return ret
+      parenLeftToken
+      args <- actual_params <|> return []
+      parenRightToken
+      
+      when (length args /= length params) $
+        error $ "incorrect number of arguments in call to function \"" ++ function_name ++
+          "\": expected " ++ show (length params) ++ ", got " ++ show (length args) ++
+          "; line: " ++ show line ++ ", column: " ++ show col
+
+      zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
+          case passmode of
+            ByReference ->
+              case actual of
+                Left (t, tok) ->
+                  case tok of
+                    (tokFirst:_) -> do
+                      mIsConst <- is_name_constant tokFirst
+                      case mIsConst of
+                        Just True ->
+                          error $ "actual parameter \"" ++ get_id_name tokFirst ++
+                            "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
+                        _ -> return ()
+                    _ -> return ()
+                Right _ ->
+                  error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
+            ByValue ->
+              return ()
+        ) params args
+
+      let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+
+      let st' = st { call_stack = new_ar : call_stack st }
+      putState st'
+
+      zipWithM_ (\(formal_name, formal_type, _) actual -> do
+        let actual_type = case actual of
+              Left (t, _) -> t
+              Right t     -> t
+
+        when (extract_base_type formal_type /= extract_base_type actual_type) $
+          error $ "type mismatch for parameter \"" ++ formal_name ++
+            "\" in call to function \"" ++ function_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
+            show_pretty_type_values actual_type ++ "; line: " ++ show line ++ ", column: " ++ show col
+
+        updateState (insert_symbol (formal_name, actual_type, True) (line, col))
+        ) params args
+
+      s' <- getState
+      result <- lift $ runParserTWithState stmts s' body_tokens
+      
+      (ret, new_state) <- case result of
+        Left err -> error (show err)
+        Right (Just return_val, new_state) ->
+          if compare_type_base return_type return_val
+            then return (return_val, new_state)
+            else error $ "type error: function \"" ++ function_name ++ "\" expects return type " ++ show_pretty_types return_type ++
+            ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show line ++ ", column: " ++ show col
+        Right (Nothing, _) -> error $ "function \"" ++ function_name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column: " ++ show col
+      
+      case call_stack s' of
+        [] -> error "call_stack unexpectedly empty after procedure call"
+        (_ : rest) -> putState $ new_state { call_stack = rest }
+      
+      zipWithM_ (\(name, _, passmode) param -> do
+        case (passmode, param) of
+          (ByValue, _) -> return ()
+          (ByReference, Right _) -> return ()
+          (ByReference, Left (_, toks)) -> do
+            updateState $
+              symtable_update_by_access_chain toks
+                (lookup_variable (Id name (line, col)) new_state)
+        ) params args
+
+      return ret
   <|> try scan_function
 
 actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
