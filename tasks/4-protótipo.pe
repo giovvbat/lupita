@@ -22,7 +22,7 @@ function calculate_gcd(fst int, snd int) int {
 }
 
 function simplify_rational(rational rational_t) rational_t {
-    divisor = calculate_gcd(rational.num, rational.den);
+    divisor int = calculate_gcd(rational.num, rational.den);
     num int = rational.num / divisor;
     den int = rational.den / divisor;
 

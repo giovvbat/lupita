@@ -1,14 +1,12 @@
-procedure teste() {
-    y int;
-    if (true) {
-        x int;
-    }
+struct Pessoa {
+    idade int;
+}
+
+procedure teste(p Pessoa) {
+    print(7/p.idade);
 }
 
 procedure main() {
-    x int;
-    if (true) {
-        y int;
-        teste();
-    }
+    p Pessoa;
+    teste(p);
 }
