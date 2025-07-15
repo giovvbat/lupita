@@ -868,7 +868,8 @@ all_assign_tokens =
   <|>
   try (do
     DivAssign pos@(line, col) <- divAssignToken
-    return do_div_op
+    s <- getState
+    return (do_div_op s)
   )
   <|>
   try (do
@@ -1243,7 +1244,8 @@ mul_div_rem_op =
   <|>
   (do
     Div (line, col) <- divToken;
-    return (do_div_op (line, col))
+    s <- getState
+    return (do_div_op s (line, col))
   )
   <|>
   (do
@@ -1280,10 +1282,24 @@ do_number_mul_op (line, col) = \a b -> case (a, b) of
   (Floating x, Floating y) -> Floating $ x * y
   (x, y) -> error $ binary_type_error "*" x y (line, col)
 
-do_div_op :: (Int, Int) -> (Type -> Type -> Type)
-do_div_op (line, col) = \a b -> case (a, b) of
-  (x, Integer 0) -> error $ "no mathematical divisions per 0 are allowed; line: " ++ show line ++ "; column: " ++ show col
-  (x, Floating 0) -> error $ "no mathematical divisions per 0.0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+do_div_op :: MemoryState -> (Int, Int) -> (Type -> Type -> Type)
+do_div_op st (line, col) = \a b -> case (a, b) of
+  (Integer _, Integer 0) -> 
+    if (executing st)
+      then error $ "no mathematical divisions per 0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+      else Integer 0
+  (Floating _, Integer 0) ->
+    if (executing st)
+      then error $ "no mathematical divisions per 0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+      else Floating 0.0
+  (Integer _, Floating 0.0) -> 
+    if (executing st)
+      then error $ "no mathematical divisions per 0.0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+      else Floating 0.0
+  (Floating _, Floating 0.0) ->
+    if (executing st)
+      then error $ "no mathematical divisions per 0.0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+      else Floating 0.0
   (Integer x, Integer y) -> Integer $ x `div` y
   (Floating x, Integer y) -> Floating $ x / fromIntegral y
   (Integer x, Floating y) -> Floating $ fromIntegral x / y
