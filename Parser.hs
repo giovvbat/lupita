@@ -5,6 +5,8 @@
 {-# HLINT ignore "Redundant lambda" #-}
 {-# HLINT ignore "Use lambda-case" #-}
 {-# HLINT ignore "Eta reduce" #-}
+{-# HLINT ignore "Redundant bracket" #-}
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 module Main (main) where
 
 import Control.Arrow (Arrow (first))
@@ -15,7 +17,7 @@ import GHC.RTS.Flags (TraceFlags (user))
 import Lexer
 import Text.Parsec
 import Data.Char (toLower)
-import Data.List (nub, (\\), find)
+import Data.List (nub, (\\), find, intersperse, intercalate, transpose)
 import Control.Monad.Trans.Class (lift)
 import Debug.Trace (traceShow)
 import System.Environment
@@ -44,7 +46,7 @@ data PassMode = ByValue | ByReference
 -- nome do parâmetro, tipo, modo de passagem
 type FormalParam = (String, Type, PassMode)
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)] | Vector Type [Type] | Matrix Type [[Type]]
     deriving (Show, Eq)
 
 -- tipo para distinguir função e procedimento
@@ -410,13 +412,13 @@ mainToken = tokenPrim show update_pos get_token
 vectorToken :: ParsecT [Token] st IO Token
 vectorToken = tokenPrim show update_pos get_token
   where
-    get_token (Vector p) = Just (Vector p)
+    get_token (Vectr p) = Just (Vectr p)
     get_token _ = Nothing
 
 matrixToken :: ParsecT [Token] st IO Token
 matrixToken = tokenPrim show update_pos get_token
   where
-    get_token (Matrix p) = Just (Matrix p)
+    get_token (Matrx p) = Just (Matrx p)
     get_token _ = Nothing
 
 printToken :: ParsecT [Token] st IO Token
@@ -465,6 +467,7 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
+  s <- getState
   -- print_symtable
   -- print_types
   -- print_subprograms
@@ -537,18 +540,57 @@ enum = do
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
-  first@(name, t, is_var) <- try variable_declarations
+  first <- try user_defined_types_declaration
   next <- remaining_user_defined_types_declarations
-  return ((name, t) : next)
+  return (first : next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 remaining_user_defined_types_declarations =
   (do
-    first@(name, t, is_var) <- try variable_declarations
+    first <- try user_defined_types_declaration
     rest <- remaining_user_defined_types_declarations
-    return ((name, t) : rest)
+    return (first : rest)
   )
   <|> return []
+
+user_defined_types_declaration :: ParsecT [Token] MemoryState IO (String, Type)
+user_defined_types_declaration =
+  try (do
+    a@(Id name (line, col)) <- idToken
+    b <- all_possible_type_tokens
+    c <- assignToken
+    d <- expression
+    e <- semiColonToken
+    s <- getState
+    let expr_base_type = extract_base_type d
+    let declared_base_type = extract_base_type b
+    if declared_base_type == expr_base_type
+      then do
+        if validate_non_zero d
+          then do
+            updateState (insert_symbol (name, d, True) (line, col))
+            return (name, d)
+        else
+          error $ "no user defined fields may be declared as zero; line: " ++ show line ++ ", column: " ++ show col
+      else
+        error $ variable_type_error_msg name b d (line, col)
+  )
+  <|>
+  try (do
+    a@(Id name (line, col)) <- idToken
+    b <- guessToken
+    c <- assignToken
+    d <- expression
+    e <- semiColonToken
+    s <- getState
+    let expr_base_type = extract_base_type d
+    if validate_non_zero d
+      then do
+        updateState (insert_symbol (name, d, True) (line, col))
+        return (name, d)
+    else
+      error $ "no user defined fields may be declared as zero; line: " ++ show line ++ ", column: " ++ show col
+  )
 
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
@@ -563,10 +605,10 @@ variable_declaration = do
   c <- semiColonToken
   s <- getState
   if executing s
-    then do 
+    then do
       updateState (insert_symbol (name, b, True) (line, col))
       return (name, b, True)
-    else do 
+    else do
       updateState (insert_symbol (name, normalize_types b, True) (line, col))
       return (name, normalize_types b, True)
 
@@ -669,27 +711,27 @@ procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
   original_state <- getState
   let flaggedState = original_state { in_procedure = True }
-  
-  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing } 
+
+  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing }
   putState flaggedState { call_stack = newAR : call_stack flaggedState, current_scope = LocalScope }
 
   a <- procedureToken
   b@(Id name (line, col)) <- idToken
   c@(ParenLeft (paramline, paramcol)) <- parenLeftToken
   d <- params
-  
+
   mapM_ (\(param_name, typ, passmode) -> do
             st <- getState
             let sym = (param_name, typ, True)
             updateState $ local_insert sym (line, col)
         ) d
-  
+
   e <- parenRightToken
   f <- bracketLeftToken
-  
+
   before <- getInput
   g <- stmts
-  
+
   after <- getInput
   h <- bracketRightToken
 
@@ -710,7 +752,7 @@ function :: ParsecT [Token] MemoryState IO [Token]
 function = do
   original_state <- getState
 
-  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing } 
+  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing }
   putState original_state { call_stack = newAR : call_stack original_state, current_scope = LocalScope }
 
   a <- functionToken
@@ -735,12 +777,12 @@ function = do
   case cs of
     [] -> error "call_stack unexpectedly empty when exiting function"
     (_ar : rest) -> putState $ st1 { call_stack = rest, current_scope = GlobalScope }
-  
+
   case h of
     Nothing -> error $ "function \"" ++ name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column " ++ show col
-    Just t -> when (extract_base_type t /= extract_base_type f) $ error $ "type mismatch in return of function \"" ++ name ++ "\": expected " ++ 
+    Just t -> when (extract_base_type t /= extract_base_type f) $ error $ "type mismatch in return of function \"" ++ name ++ "\": expected " ++
       show_pretty_types f ++ ", but got " ++ show_pretty_type_values t ++ "; line: " ++ show line ++ ", column " ++ show col
-  
+
   let body_tokens = take (length before - length after) before
 
   updateState (subprogramtable_insert (Function name d f body_tokens) (line, col))
@@ -856,7 +898,7 @@ all_assign_tokens =
   <|>
   try (do
     MulAssign pos@(line, col) <- mulAssignToken
-    return do_mul_op
+    return do_number_mul_op
   )
   <|>
   try (do
@@ -901,7 +943,7 @@ procedure_call = try $ do
   Id proc_name (line, col) <- idToken
 
   lookAhead parenLeftToken
-  
+
   st <- getState
   let maybe_proc = find (\sp -> case sp of
                                   Procedure name _ _ -> name == proc_name
@@ -909,12 +951,12 @@ procedure_call = try $ do
   case maybe_proc of
     Nothing -> error $ "procedure \"" ++ proc_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
     Just (Procedure _ params body_tokens) -> do
-      
+
       parenLeftToken
       args <- actual_params <|> return []
       parenRightToken
       semiColonToken
-      
+
       when (length args /= length params) $
         error $ "incorrect number of arguments in call to procedure \"" ++ proc_name ++
           "\": expected " ++ show (length params) ++ ", got " ++ show (length args) ++
@@ -939,12 +981,12 @@ procedure_call = try $ do
             ByValue ->
               return ()
         ) params args
-      
+
       let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
-      
+
       let st' = st { call_stack = new_ar : call_stack st }
       putState st'
-      
+
       zipWithM_ (\(formal_name, formal_type, _) actual -> do
         let actual_type = case actual of
               Left (t, _) -> t
@@ -958,7 +1000,7 @@ procedure_call = try $ do
         updateState (insert_symbol (formal_name, actual_type, True) (line, col))
         ) params args
 
-      
+
       s' <- getState
       result <- lift $ runParserTWithState stmts s' body_tokens
 
@@ -1190,6 +1232,13 @@ do_add_op (line, col) = \a b -> case (a, b) of
   (Str x, Str y) -> Str $ x ++ y
   (Str x, y) -> Str $ x ++ type_to_string y
   (x, Str y) -> Str $ type_to_string x ++ y
+  -- matrix addition
+  (Matrix t1 xs, Matrix t2 ys)
+    | t1 /= t2 -> error $ binary_type_error "+" a b (line, col)
+    | length xs /= length ys -> error $ "size error: matrices with different number of rows; line " ++ show line ++ ", column " ++ show col
+    | any (\(rowX, rowY) -> length rowX /= length rowY) (zip xs ys) ->
+        error $ "size error: matrices with different number of columns; line " ++ show line ++ ", column " ++ show col
+    | otherwise -> Matrix t1 (zipWith (zipWith (do_add_op (line, col))) xs ys)
   (x, y) -> error $ binary_type_error "+" x y (line, col)
 
 do_number_add_op :: (Int, Int) -> (Type -> Type -> Type)
@@ -1226,7 +1275,28 @@ mul_div_rem_op =
   )
 
 do_mul_op :: (Int, Int) -> (Type -> Type -> Type)
-do_mul_op (line, col) = \a b -> case (a, b) of
+do_mul_op (line, column) = \a b -> case (a, b) of
+  (Integer x, Integer y) -> Integer $ x * y
+  (Floating x, Integer y) -> Floating $ x * fromIntegral y
+  (Integer x, Floating y) -> Floating $ fromIntegral x * y
+  (Floating x, Floating y) -> Floating $ x * y
+  -- matrix multiplication
+  (Matrix t1 aRows, Matrix t2 bRows)
+    | t1 /= t2 -> error $ binary_type_error "*" a b (line, column)
+    | null aRows || null bRows || null (head bRows) -> 
+        error $ "size error: cannot multiply empty matrices at line " ++ show line ++ ", col " ++ show column
+    | length (head aRows) /= length bRows ->
+        error $ "size error: incompatible matrix dimensions for multiplication at line " ++ show line ++ ", col " ++ show column
+    | otherwise ->
+        let result = [ [ sum_row_col row colVec | colVec <- transpose bRows ] | row <- aRows ]
+        in Matrix t1 result
+    where
+      sum_row_col :: [Type] -> [Type] -> Type
+      sum_row_col row colVec = foldl1 (do_add_op (line, column)) $ zipWith (do_mul_op (line, column)) row colVec
+  (x, y) -> error $ binary_type_error "*" x y (line, column)
+
+do_number_mul_op :: (Int, Int) -> (Type -> Type -> Type)
+do_number_mul_op (line, col) = \a b -> case (a, b) of
   (Integer x, Integer y) -> Integer $ x * y
   (Floating x, Integer y) -> Floating $ x * fromIntegral y
   (Integer x, Floating y) -> Floating $ fromIntegral x * y
@@ -1235,6 +1305,8 @@ do_mul_op (line, col) = \a b -> case (a, b) of
 
 do_div_op :: (Int, Int) -> (Type -> Type -> Type)
 do_div_op (line, col) = \a b -> case (a, b) of
+  (x, Integer 0) -> error $ "no mathematical divisions per 0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+  (x, Floating 0) -> error $ "no mathematical divisions per 0.0 are allowed; line: " ++ show line ++ "; column: " ++ show col
   (Integer x, Integer y) -> Integer $ x `div` y
   (Floating x, Integer y) -> Floating $ x / fromIntegral y
   (Integer x, Floating y) -> Floating $ fromIntegral x / y
@@ -1356,7 +1428,7 @@ function_call = try $ do
       parenLeftToken
       args <- actual_params <|> return []
       parenRightToken
-      
+
       when (length args /= length params) $
         error $ "incorrect number of arguments in call to function \"" ++ function_name ++
           "\": expected " ++ show (length params) ++ ", got " ++ show (length args) ++
@@ -1394,7 +1466,7 @@ function_call = try $ do
 
         when (extract_base_type formal_type /= extract_base_type actual_type) $
           error $ "type mismatch for parameter \"" ++ formal_name ++
-            "\" in call to function \"" ++ function_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++ 
+            "\" in call to function \"" ++ function_name ++ "\": expected " ++ show_pretty_types formal_type ++ ", got " ++
             show_pretty_type_values actual_type ++ "; line: " ++ show line ++ ", column: " ++ show col
 
         updateState (insert_symbol (formal_name, actual_type, True) (line, col))
@@ -1402,7 +1474,7 @@ function_call = try $ do
 
       s' <- getState
       result <- lift $ runParserTWithState stmts s' body_tokens
-      
+
       (ret, new_state) <- case result of
         Left err -> error (show err)
         Right (Just return_val, new_state) ->
@@ -1411,11 +1483,11 @@ function_call = try $ do
             else error $ "type error: function \"" ++ function_name ++ "\" expects return type " ++ show_pretty_types return_type ++
             ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show line ++ ", column: " ++ show col
         Right (Nothing, _) -> error $ "function \"" ++ function_name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column: " ++ show col
-      
+
       case call_stack s' of
         [] -> error "call_stack unexpectedly empty after procedure call"
         (_ : rest) -> putState $ new_state { call_stack = rest }
-      
+
       zipWithM_ (\(name, _, passmode) param -> do
         case (passmode, param) of
           (ByValue, _) -> return ()
@@ -1473,12 +1545,14 @@ while = do
   e <- bracketLeftToken
   inputBefore <- getInput
   updateState (\st -> st { executing = False })
+  updateState enter_scope
   f <- stmts
+  updateState exit_scope
   updateState (\st -> st { executing = exec })
   inputAfter <- getInput
   g <- bracketRightToken
   let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
-  if exec 
+  if exec
     then run_loop False condTokens bodyTokens (line, column) Nothing
     else return Nothing
 
@@ -1502,7 +1576,7 @@ repeat_until = do
     j <- semiColonToken
     let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
     let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
-    if exec 
+    if exec
         then run_loop True condTokens bodyTokens (line, column) c
         else return c
 
@@ -1516,8 +1590,7 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
     Right condExpr -> case check_condition "loop" (line, column) condExpr of
       Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
-  
-  return_val <- if condBool
+  if condBool
     then do
       state' <- getState
       result <- lift $ runParserTWithState stmts state' bodyTokens
@@ -1532,8 +1605,6 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
     else do
       updateState exit_scope
       return previous_return
-
-  return return_val
 
 for :: ParsecT [Token] MemoryState IO (Maybe Type)
 for = do
@@ -1597,14 +1668,14 @@ if_else :: ParsecT [Token] MemoryState IO (Maybe Type)
 if_else = do
   (first, cond) <- cond_if
   (has_else, next) <- cond_else cond
-  
+
   returns_same_type <- case (first, next) of
     (Just a, Just b) -> return $ compare_type_base a b
     (_, _) -> return False
-  
+
   if has_else && not returns_same_type
     then return Nothing
-    else if cond 
+    else if cond
         then return first
         else return next
 
@@ -1662,7 +1733,7 @@ match_case = do
   _ <- parenRightToken
   _ <- bracketLeftToken
   (return_type, matched_total) <- cases expr
-  
+
   h <- bracketRightToken
   return return_type
 
@@ -1770,14 +1841,16 @@ all_possible_type_tokens =
     let t = get_type_value a st
     t `seq` return t
   )
-  -- <|>
-  -- try (do
-  --   a <- matrixToken <|> vectorToken
-  --   b <- lessToken
-  --   c <- all_possible_type_tokens
-  --   d <- greaterToken
-  --   return ([a] ++ [b] ++ c ++ [d])
-  -- )
+  <|>
+  try (do
+    a <- matrixToken <|> vectorToken
+    b <- lessToken
+    c <- all_possible_type_tokens
+    d <- greaterToken
+    st <- getState
+    let t = get_data_structure_value a c
+    t `seq` return t
+  )
 
 string_tokens :: ParsecT [Token] MemoryState IO Type
 string_tokens = do
@@ -1807,6 +1880,10 @@ type_to_string (Boolean True) = "true"
 type_to_string (Boolean False) = "false"
 type_to_string (Record name fields) = show_fields fields
 type_to_string (Enumeration name fields) = show_fields fields
+type_to_string (Vector _ elements) = "[" ++ elements_str ++ "]" where elements_str = intercalate ", " (map type_to_string elements)
+type_to_string (Matrix _ rows) = "[" ++ rows_str ++ "]" where
+  rows_str = intercalate ", " (map row_to_string rows)
+  row_to_string row = "[" ++ (intercalate ", " (map type_to_string row)) ++ "]"
 
 scan_function :: ParsecT [Token] MemoryState IO Type
 scan_function = do
@@ -1824,7 +1901,7 @@ all_escapes_stmts = do
   a <- continueToken <|> leaveToken <|> breakToken
   b <- semiColonToken
   return Nothing
-  
+
 -- funções para a nova tabela de símbolos
 
 lookup_variable :: Token -> MemoryState -> Type
@@ -1875,7 +1952,7 @@ lookup_const_in_activation_record name ar =
         Nothing -> case static_link ar of
             Just parent -> lookup_const_in_activation_record name parent
             Nothing -> Nothing
-        
+
 lookup_const_in_scopes :: String -> [[Symbol]] -> Maybe Bool
 lookup_const_in_scopes _ [] = Nothing
 lookup_const_in_scopes name (scope:rest) =
@@ -1915,6 +1992,13 @@ get_type_value (String x _) _ = Str x
 get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
 get_type_value token@(Id x _) (MemoryState _ _ table _ _ _ _) = lookup_type token table
+
+get_data_structure_value :: Token -> Type -> Type
+get_data_structure_value token inner_type =
+  case token of
+    Matrx _ -> Matrix (extract_base_type inner_type) [[]]
+    Vectr _ -> Vector (extract_base_type inner_type) []
+    _       -> error "internal error: unknown data-structure type provided by token"
 
 is_name_constant :: Token -> ParsecT [Token] MemoryState IO (Maybe Bool)
 is_name_constant (Id name _) = do
@@ -1996,13 +2080,13 @@ global_insert symbol@(name, _, _) (line, column) st =
     if name `elem` declared_names
         then error $ "global variable \"" ++ name ++ "\" already declared; line: " ++ show line ++ ", column: " ++ show column
         else st { globals = globals st ++ [symbol] }
-        
+
 insert_symbol :: Symbol -> (Int, Int) -> MemoryState -> MemoryState
 insert_symbol sym (line, column) st =
     case current_scope st of
         GlobalScope -> global_insert sym (line, column) st
         LocalScope -> local_insert sym (line, column) st
-        
+
 local_insert :: Symbol -> (Int, Int) -> MemoryState -> MemoryState
 local_insert symbol@(name, _, _) (line, column) st =
   case call_stack st of
@@ -2027,12 +2111,12 @@ local_insert symbol@(name, _, _) (line, column) st =
     elemName :: String -> [Symbol] -> Bool
     elemName n = any (\(name', _, _) -> name' == n)
 
--- Atualiza uma variável (ou campo aninhado) pela cadeia de acesso no estado atual
+-- atualiza uma variável (ou campo aninhado) pela cadeia de acesso no estado atual
 symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
 symtable_update_by_access_chain [] _ st = st  -- nada a fazer
 symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
 symtable_update_by_access_chain (Id base_name pos : rest) new_val st =
-  -- Procura na localSymbols do topo do call_stack
+  -- procura na localSymbols do topo do call_stack
   case call_stack st of
     [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name
     (ar : restStack) ->
@@ -2050,7 +2134,7 @@ symtable_update_by_access_chain (Id base_name pos : rest) new_val st =
             let updatedAR = ar { local_symbols = updatedLocals }
                 st' = st { call_stack = updatedAR : restStack }
             in st'
-          Nothing -> 
+          Nothing ->
             -- se não achou localmente, tenta atualizar nas globais
             case lookup base_name [(n, v) | (n, v, _) <- globals st] of
               Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
@@ -2060,7 +2144,7 @@ symtable_update_by_access_chain (Id base_name pos : rest) new_val st =
                 in st { globals = updatedGlobals }
 symtable_update_by_access_chain _ _ st = st -- fallback seguro
 
--- Função auxiliar: procura símbolo pelo nome nas listas de escopos (da mais interna para a mais externa)
+-- função auxiliar: procura símbolo pelo nome nas listas de escopos (da mais interna para a mais externa)
 findSymbolInScopes :: String -> [[Symbol]] -> Maybe Type
 findSymbolInScopes _ [] = Nothing
 findSymbolInScopes name (scope:rest) =
@@ -2068,7 +2152,7 @@ findSymbolInScopes name (scope:rest) =
     Just typ -> Just typ
     Nothing -> findSymbolInScopes name rest
 
--- Atualiza o tipo de um símbolo na lista de escopos (somente primeiro escopo onde encontrar o símbolo)
+-- atualiza o tipo de um símbolo na lista de escopos (somente primeiro escopo onde encontrar o símbolo)
 updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
 updateSymbolInScopes _ _ [] = []
 updateSymbolInScopes name f (scope:rest) =
@@ -2092,11 +2176,11 @@ update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val po
 update_nested_type t (_:_) _ (line, col) =
   error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++ "; line " ++ show line ++ ", column " ++ show col
 
--- Atualiza o tipo aninhado de um símbolo (tipo -> tipo atualizado)
+-- atualiza o tipo aninhado de um símbolo (tipo -> tipo atualizado)
 updateNestedTypeInSymbol :: [Token] -> Type -> (Int, Int) -> Type -> Type
 updateNestedTypeInSymbol tokens newVal pos oldType = update_nested_type oldType tokens newVal pos
 
--- Atualiza a lista de símbolos (globals) com novo tipo para variável
+-- atualiza a lista de símbolos (globals) com novo tipo para variável
 updateEntry :: String -> Type -> [Symbol] -> [Symbol]
 updateEntry _ _ [] = []
 updateEntry name newVal ((n, t, isVar) : rest)
@@ -2105,7 +2189,7 @@ updateEntry name newVal ((n, t, isVar) : rest)
     else (n, newVal, isVar) : rest
   | otherwise = (n, t, isVar) : updateEntry name newVal rest
 
--- Atualiza variável simples (sem cadeia de acesso) nas variáveis locais e globais
+-- atualiza variável simples (sem cadeia de acesso) nas variáveis locais e globais
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name pos, new_value) st =
   case call_stack st of
@@ -2153,6 +2237,8 @@ extract_base_type t = case t of
   Boolean _ -> Boolean False
   Record name _ -> Record name []
   Enumeration name _ -> Record name []
+  Vector t _ -> Vector t []
+  Matrix t _ -> Matrix t []
 
 get_type_name :: Type -> String
 get_type_name (Record name _) = name
@@ -2168,6 +2254,11 @@ normalize_types (Integer _) = Integer 1
 normalize_types (Floating _) = Floating 1.0
 normalize_types other = other
 
+validate_non_zero :: Type -> Bool
+validate_non_zero (Integer 0)  = False
+validate_non_zero (Floating 0.0) = False
+validate_non_zero t = True
+
 --- funções para auxiliar na impressão de mensagens de erro
 
 show_pretty_types :: Type -> String
@@ -2178,6 +2269,8 @@ show_pretty_types t = case t of
   Boolean _ -> "bool"
   Record name _ -> name
   Enumeration name _ -> name
+  Matrix inner_type _ -> "matrix<"++ show_pretty_types inner_type ++ ">"
+  Vector inner_type _ -> "vector<" ++ show_pretty_types inner_type ++ ">"
 
 show_pretty_type_values :: Type -> String
 show_pretty_type_values t = case t of
@@ -2187,6 +2280,8 @@ show_pretty_type_values t = case t of
   Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
   Record name fields -> name ++ " (" ++ show_fields fields ++ ")"
   Enumeration name values -> name ++ " (" ++ show_fields values ++ ")"
+  Vector inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
+  Matrix inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
 
 -- função auxiliar para imprimir os campos/labels formatados
 

@@ -1,12 +1,8 @@
-struct Pessoa {
-    idade int;
-}
-
-procedure teste(p Pessoa) {
-    print(7/p.idade);
-}
-
 procedure main() {
-    p Pessoa;
-    teste(p);
+    y int=4;
+    while(y < 5) {
+        x int;
+        print(x);
+        y += 1;
+    }
 }

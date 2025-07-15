@@ -32,8 +32,8 @@ tokens :-
   float                                { \p s -> Type s (getLC p) }
   bool                                 { \p s -> Type s (getLC p) }
   string                               { \p s -> Type s (getLC p) }
-  vector                               { \p s -> Vector (getLC p) }
-  matrix                               { \p s -> Matrix (getLC p) }
+  vector                               { \p s -> Vectr (getLC p) }
+  matrix                               { \p s -> Matrx (getLC p) }
   true                                 { \p s -> Bool True (getLC p) }
   false                                { \p s -> Bool False (getLC p) }
   "&"                                  { \p s -> Reference (getLC p) }
@@ -102,8 +102,8 @@ data Token =
   DivAssign (Int, Int) |
   RemAssign (Int, Int) |
   PowAssign (Int, Int) |
-  Vector  (Int, Int) |
-  Matrix  (Int, Int) |
+  Vectr  (Int, Int) |
+  Matrx  (Int, Int) |
   Print   (Int, Int) |
   Scan    (Int, Int) |
   Add    (Int, Int) |
