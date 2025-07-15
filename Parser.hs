@@ -1386,14 +1386,19 @@ access_chain_tail varName current_type pos = do
 
 indexed_access :: String -> Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [AccessStep])
 indexed_access varName (Vector t elems) (line, col) = do
+  s <- getState
   _ <- braceLeftToken
   index_expr <- expression
   _ <- braceRightToken
   case index_expr of
     Integer i ->
-      if i < 0 || i >= length elems
-        then error $ "index " ++ show i ++ " out of bounds for vector; line " ++ show line ++ ", column " ++ show col
-        else return (elems !! i, [AccessIndex i])
+      if executing s 
+        then
+          if i < 0 || i >= length elems
+            then error $ "index " ++ show i ++ " out of bounds for vector; line " ++ show line ++ ", column " ++ show col
+            else return (elems !! i, [AccessIndex i])
+        else
+          return (t, [AccessIndex i])
     _ -> error $ "index must be an integer for vector access; line " ++ show line ++ ", column " ++ show col
 indexed_access varName (Matrix t rows) (line, col) = do
   _ <- braceLeftToken
@@ -2325,6 +2330,8 @@ compare_type_base first_type second_type = case (first_type, second_type) of
   (Boolean _, Boolean _)     -> True
   (Record first_record _, Record second_record _) -> first_record == second_record
   (Enumeration first_enumeration _, Enumeration second_enumeration _) -> first_enumeration == second_enumeration
+  (Vector t1 _, Vector t2 _) -> compare_type_base t1 t2
+  (Matrix t1 _, Matrix t2 _) -> compare_type_base t1 t2
   _                          -> False
 
 extract_base_type :: Type -> Type

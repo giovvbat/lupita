@@ -1,0 +1,109 @@
+function add_matrix(a vector<vector<int>>, b vector<vector<int>>) vector<vector<int>> {
+    rows1 int = length(a);
+    cols1 int = length(a[0]);
+
+    rows2 int = length(b);
+    cols2 int = length(b[0]);
+
+    if (rows1 != rows2 || cols1 != cols2) {
+        print("Erro: não é possível somar matrizes de tamanhos diferentes");
+        result vector<vector<int>>;
+        return result;
+    }
+
+    for (i int = 0; i < rows1; i += 1) {
+        for (j int = 0; j < cols1; j += 1) {
+            a[i][j] += b[i][j];
+        }
+    }
+    
+    return a;
+}
+
+function multiply_matrix(a vector<vector<int>>, b vector<vector<int>>) vector<vector<int>> {
+    rows1 int = length(a);
+    cols1 int = length(a[0]);
+
+    rows2 int = length(b);
+    cols2 int = length(b[0]);
+
+    if (cols1 != rows2) {
+        print("Erro: não é possível multiplicar matrizes de dimensões " + rows1 + "x" + cols1 + " por " + rows2 + "x" + cols2);
+        result vector<vector<int>>;
+        return result;
+    }
+
+    result vector<vector<int>>;
+
+    for (i int = 0; i < rows1; i += 1) {
+        row vector<int>;
+
+        for (j int = 0; j < cols2; j += 1) {
+            sum int = 0;
+
+            for (k int = 0; k < cols1; k += 1) {
+                sum += a[i][k] * b[k][j];
+            }
+
+            row = row + sum;
+        }
+
+        result = result + row;
+    }
+
+    return result;
+}
+
+procedure main() {
+    m1 vector<vector<int>>;
+    m2 vector<vector<int>>;
+
+    print("Digite o número de linhas da primeira matriz:");
+    rows1 int = scan();
+    print("Digite o número de colunas da primeira matriz:");
+    cols1 int = scan();
+
+    for (i int = 0; i < rows1; i += 1) {
+        line vector<int>;
+
+        for (j int = 0; j < cols1; j += 1) {
+            print("Digite o elemento [" + i + ", " + j + "] da primeira matriz:");
+            line = line + scan();
+        }
+
+        m1 = m1 + line;
+    }
+
+    print("Digite o número de linhas da segunda matriz:");
+    rows2 int = scan();
+    print("Digite o número de colunas da segunda matriz:");
+    cols2 int = scan();
+
+    for (i int = 0; i < rows2; i += 1) {
+        line vector<int>;
+
+        for (j int = 0; j < cols2; j += 1) {
+            print("Digite o elemento [" + i + ", " + j + "] da segunda matriz:");
+            line = line + scan();
+        }
+
+        m2 = m2 + line;
+    }
+
+    print();
+
+    print("Matriz 1: " + m1);
+    print("Matriz 2: " + m2);
+
+    print();
+
+    m3 guess = add_matrix(m1, m2);
+    if (length(m3) != 0) {
+        print("A soma das matrizes foi: " + m3);
+    }
+
+    m4 guess = multiply_matrix(m1, m2);
+    if (length(m4) != 0) {
+        print("O produto das matrizes foi: " + m4);
+    }
+}
