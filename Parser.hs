@@ -1602,7 +1602,7 @@ run_loop negateCondition condTokens bodyTokens incrementTokens (line, column) pr
           putState bodyResultState
 
           incrementState <- getState
-          incrementResult <- lift $ runParserTWithState for_assign incrementState incrementTokens
+          incrementResult <- lift $ runParserTWithState (try for_assign <|> return Nothing) incrementState incrementTokens
           case incrementResult of
             Left err -> error (show err)
             Right (_, afterIncrementState) -> putState afterIncrementState
