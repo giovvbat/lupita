@@ -1,15 +1,12 @@
 procedure main() {
-    a vector<vector<int>>;
-    
-    for (i int = 0; i < 3; i += 1) {
-        line vector<int>;
+    a matrix<int : [2, 1]>;
+    b matrix<int : [1, 5]>;
 
-        for (j int = 0; j < 2; j += 1) {
-            line = line + (i + j);
-        }
+    print(b);
 
-        a = a + line;
-    }
+    b[0, 0] = 1;
 
-    print(a);
+    print(b);
+
+    print(b[0, 0]);
 }

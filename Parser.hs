@@ -46,7 +46,7 @@ data PassMode = ByValue | ByReference
 -- nome do parâmetro, tipo, modo de passagem
 type FormalParam = (String, Type, PassMode)
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)] | Vector Type [Type] | Matrix Type [[Type]]
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)] | Vector Type [Type] | Matrix Type [[Type]] (Int, Int)
     deriving (Show, Eq)
 
 -- tipo para distinguir função e procedimento
@@ -443,6 +443,12 @@ lengthToken = tokenPrim show update_pos get_token
     get_token (Length p) = Just (Length p)
     get_token _ = Nothing
 
+pushToken :: ParsecT [Token] st IO Token
+pushToken = tokenPrim show update_pos get_token
+  where
+    get_token (Push p) = Just (Push p)
+    get_token _ = Nothing
+
 continueToken :: ParsecT [Token] st IO Token
 continueToken = tokenPrim show update_pos get_token
   where
@@ -500,24 +506,10 @@ initial_declarations =
     initial_declarations
   )
   <|> try (do
-    a <- data_structures_declarations
-    initial_declarations
-  )
-  <|> try (do
     a <- subprograms
     initial_declarations
   )
   <|> return []
-
-data_structures_declarations :: ParsecT [Token] MemoryState IO (Maybe Type)
-data_structures_declarations = do
-  a <- idToken
-  b <- matrixToken <|> vectorToken
-  c <- lessToken
-  d <- all_possible_type_tokens
-  e <- greaterToken
-  h <- semiColonToken
-  return Nothing
 
 user_defined_types :: ParsecT [Token] MemoryState IO [Token]
 user_defined_types = enum <|> struct
@@ -566,7 +558,7 @@ remaining_user_defined_types_declarations =
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
   try variable_declaration
-  <|> try variable_declaration_assignment
+  -- <|> try variable_declaration_assignment
   <|> try variable_guess_declaration_assignment
 
 variable_declaration :: ParsecT [Token] MemoryState IO (String, Type, Bool)
@@ -837,7 +829,6 @@ stmt =
     const_declarations
     return Nothing
   )
-  <|> try data_structures_declarations
   <|> try function_return
   --- obs.: manter assign por último! caso contrário, podemos ter conflito com o access_chain nas declarações de constantes/variáveis
   <|>
@@ -994,7 +985,7 @@ function_return = do
   a@(Return (line, col)) <- returnToken
   st <- getState
   when (in_procedure st) $
-    error $ "return statements are not allowed among procedures; line: " ++ show line ++ ", col: " ++ show col
+    error $ "return statements are not allowed among procedures; line: " ++ show line ++ ", column: " ++ show col
   b <- expression
   c <- semiColonToken
   return (Just b)
@@ -1201,12 +1192,10 @@ do_add_op (line, col) = \a b -> case (a, b) of
   (Str x, y) -> Str $ x ++ type_to_string y
   (x, Str y) -> Str $ type_to_string x ++ y
   -- matriz + matriz
-  (Matrix t1 xs, Matrix t2 ys)
+  (Matrix t1 elements1 (rows1, cols1), Matrix t2 elements2 (rows2, cols2))
     | t1 /= t2 -> error $ binary_type_error "+" a b (line, col)
-    | length xs /= length ys -> error $ "size error: matrices with different number of rows; line " ++ show line ++ ", column " ++ show col
-    | any (\(rowX, rowY) -> length rowX /= length rowY) (zip xs ys) ->
-        error $ "size error: matrices with different number of columns; line " ++ show line ++ ", column " ++ show col
-    | otherwise -> Matrix t1 (zipWith (zipWith (do_add_op (line, col))) xs ys)
+    | rows1 /= rows2 || cols1 /= cols2 ->error $ "size error: matrices with different dimensions cannot be added; line " ++ show line ++ ", column " ++ show col
+    | otherwise -> Matrix t1 (zipWith (zipWith (do_add_op (line, col))) elements1 elements2) (rows1, cols1)
   -- vetor + valor
   (Vector t elems, val)
     | (extract_base_type t) /= (extract_base_type val) -> error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values val ++ " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
@@ -1259,18 +1248,17 @@ do_mul_op (line, column) = \a b -> case (a, b) of
   (Integer x, Floating y) -> Floating $ fromIntegral x * y
   (Floating x, Floating y) -> Floating $ x * y
   -- matrix multiplication
-  (Matrix t1 aRows, Matrix t2 bRows)
+  (Matrix t1 aRows (rows1, cols1), Matrix t2 bRows (rows2, cols2))
     | t1 /= t2 -> error $ binary_type_error "*" a b (line, column)
-    | null aRows || null bRows || null (head bRows) ->
-        error $ "size error: cannot multiply empty matrices at line " ++ show line ++ ", col " ++ show column
-    | length (head aRows) /= length bRows ->
-        error $ "size error: incompatible matrix dimensions for multiplication at line " ++ show line ++ ", col " ++ show column
+    | cols1 /= rows2 ->
+        error $ "size error: incompatible matrix dimensions for multiplication; line " ++ show line ++ ", column " ++ show column
     | otherwise ->
-        let result = [ [ sum_row_col row colVec | colVec <- transpose bRows ] | row <- aRows ]
-        in Matrix t1 result
+        let result = [[ sum_row_col row colVec | colVec <- transpose bRows] | row <- aRows]
+        in Matrix t1 result (rows1, cols2)
     where
       sum_row_col :: [Type] -> [Type] -> Type
-      sum_row_col row colVec = foldl1 (do_add_op (line, column)) $ zipWith (do_mul_op (line, column)) row colVec
+      sum_row_col row colVec =
+        foldl1 (do_add_op (line, column)) $ zipWith (do_mul_op (line, column)) row colVec
   (x, y) -> error $ binary_type_error "*" x y (line, column)
 
 do_number_mul_op :: (Int, Int) -> (Type -> Type -> Type)
@@ -1400,7 +1388,7 @@ indexed_access varName (Vector t elems) (line, col) = do
         else
           return (t, [AccessIndex i])
     _ -> error $ "index must be an integer for vector access; line " ++ show line ++ ", column " ++ show col
-indexed_access varName (Matrix t rows) (line, col) = do
+indexed_access varName (Matrix t elements (rows, cols)) (line, col) = do
   _ <- braceLeftToken
   i_expr <- expression
   _ <- commaToken
@@ -1408,11 +1396,11 @@ indexed_access varName (Matrix t rows) (line, col) = do
   _ <- braceRightToken
   case (i_expr, j_expr) of
     (Integer i, Integer j) ->
-      if i < 0 || i >= length rows
-        then error $ "row index " ++ show i ++ " out of bounds for matrix \"" ++ varName ++ "\"; line " ++ show line ++ ", column " ++ show col
-      else if j < 0 || j >= length (rows !! i)
-        then error $ "column index " ++ show j ++ " out of bounds for matrix \"" ++ varName ++ "\"; line " ++ show line ++ ", column " ++ show col
-      else return (t, [AccessIndex2D i j])
+      if i < 0 || i >= rows
+        then error $ "row index access at " ++ show i ++ " is out of bounds for matrix; line " ++ show line ++ ", column " ++ show col
+      else if j < 0 || j >= cols
+        then error $ "column index acess at " ++ show j ++ " is out of bounds for matrix; line " ++ show line ++ ", column " ++ show col
+      else return ((elements !! i) !! j, [AccessIndex2D i j])
     _ -> error $ "both indices must be integers for matrix access; line " ++ show line ++ ", column " ++ show col
 indexed_access _ t (line, col) =
   error $ "type " ++ show_pretty_type_values t ++ " does not support indexed access; line " ++ show line ++ ", column " ++ show col
@@ -1902,12 +1890,26 @@ all_possible_type_tokens =
   )
   <|>
   try (do
-    a <- matrixToken <|> vectorToken
+    a <- vectorToken
     b <- lessToken
     c <- all_possible_type_tokens
     d <- greaterToken
-    st <- getState
-    let t = get_data_structure_value a c
+    let t = get_vector_value a c
+    t `seq` return t
+  )
+  <|>
+  try (do
+    a@(Matrx (line, col)) <- matrixToken
+    b <- lessToken
+    c <- all_possible_type_tokens
+    _ <- colonToken
+    _ <- braceLeftToken
+    rows <- expression
+    _ <- commaToken
+    columns <- expression
+    _ <- braceRightToken
+    _ <- greaterToken
+    let t = get_matrix_value a c (extract_matrix_dimensions (rows, columns) (line, col))
     t `seq` return t
   )
 
@@ -1940,9 +1942,9 @@ type_to_string (Boolean False) = "false"
 type_to_string (Record name fields) = show_fields fields
 type_to_string (Enumeration name fields) = show_fields fields
 type_to_string (Vector _ elements) = "[" ++ elements_str ++ "]" where elements_str = intercalate ", " (map type_to_string elements)
-type_to_string (Matrix _ rows) = "[" ++ rows_str ++ "]" where
-  rows_str = intercalate ", " (map row_to_string rows)
-  row_to_string row = "[" ++ (intercalate ", " (map type_to_string row)) ++ "]"
+type_to_string (Matrix _ elements (line, cols)) = "[" ++ rows_str ++ "]" where
+  rows_str = intercalate ", " (map row_to_string elements)
+  row_to_string row = "[" ++ intercalate ", " (map type_to_string row) ++ "]"
 
 scan_function :: ParsecT [Token] MemoryState IO Type
 scan_function = do
@@ -1963,6 +1965,18 @@ vector_length_function = do
   _ <- parenRightToken
   if is_type_vector expr
     then return (Integer (measure_vector_size expr))
+    else error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
+
+vector_push_function :: ParsecT [Token] MemoryState IO Type
+vector_length_function = do
+  Length (line, col) <- push
+  _ <- parenLeftToken
+  vec <- expression
+  _ <- commaToken
+  expr <- expression
+  _ <- parenRightToken
+  if is_type_vector expr
+    then return ()
     else error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
 
 native_function_calls :: ParsecT [Token] MemoryState IO Type
@@ -2065,12 +2079,21 @@ get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
 get_type_value token@(Id x _) (MemoryState _ _ table _ _ _ _) = lookup_type token table
 
-get_data_structure_value :: Token -> Type -> Type
-get_data_structure_value token inner_type =
+get_matrix_value :: Token -> Type -> (Int, Int) -> Type
+get_matrix_value token inner_type (rows, cols) =
   case token of
-    Matrx _ -> Matrix (extract_base_type inner_type) [[]]
+    Matrx _ -> Matrix base_type matrix_data (rows, cols)
+      where
+        base_type = extract_base_type inner_type
+        row = replicate cols base_type
+        matrix_data = replicate rows row
+    _ -> error "internal error: unknown data-structure type provided by token!"
+
+get_vector_value :: Token -> Type -> Type
+get_vector_value  token inner_type =
+  case token of
     Vectr _ -> Vector (extract_base_type inner_type) []
-    _       -> error "internal error: unknown data-structure type provided by token"
+    _       -> error "internal error: unknown data-structure type provided by token!"
 
 is_name_constant :: Token -> ParsecT [Token] MemoryState IO (Maybe Bool)
 is_name_constant (Id name _) = do
@@ -2183,15 +2206,15 @@ local_insert symbol@(name, _, _) (line, column) st =
     elemName :: String -> [Symbol] -> Bool
     elemName n = any (\(name', _, _) -> name' == n)
 
--- Atualiza variável ou campo aninhado pela cadeia de acesso
+-- atualiza variável ou campo aninhado pela cadeia de acesso
 symtable_update_by_access_chain :: [AccessStep] -> Type -> MemoryState -> MemoryState
 symtable_update_by_access_chain [] _ st = st -- nada a fazer
 
--- Caso final: só AccessId = variável simples
+-- caso final: só AccessId = variável simples
 symtable_update_by_access_chain [AccessId idTok@(Id name pos)] new_val st =
   symtable_update (idTok, new_val) st
 
--- Caso geral: primeiro é AccessId (variável base), resto é cadeia aninhada
+-- caso geral: primeiro é AccessId (variável base), resto é cadeia aninhada
 symtable_update_by_access_chain (AccessId baseId@(Id base_name pos) : rest) new_val st =
   case call_stack st of
     [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name
@@ -2215,7 +2238,7 @@ symtable_update_by_access_chain (AccessId baseId@(Id base_name pos) : rest) new_
 
 symtable_update_by_access_chain _ _ st = st -- fallback seguro
 
--- Atualiza variável simples (sem cadeia aninhada)
+-- atualiza variável simples (sem cadeia aninhada)
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name pos, new_value) st =
   case call_stack st of
@@ -2237,7 +2260,7 @@ symtable_update (Id id_name pos, new_value) st =
 
 symtable_update _ st = st
 
--- Busca símbolo pelo nome nas listas de escopos (da mais interna para mais externa)
+-- busca símbolo pelo nome nas listas de escopos (da mais interna para mais externa)
 findSymbolInScopes :: String -> [[Symbol]] -> Maybe Type
 findSymbolInScopes _ [] = Nothing
 findSymbolInScopes name (scope:rest) =
@@ -2245,7 +2268,7 @@ findSymbolInScopes name (scope:rest) =
     Just typ -> Just typ
     Nothing  -> findSymbolInScopes name rest
 
--- Atualiza tipo do símbolo na primeira ocorrência encontrada na lista de escopos
+-- atualiza tipo do símbolo na primeira ocorrência encontrada na lista de escopos
 updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
 updateSymbolInScopes _ _ [] = []
 updateSymbolInScopes name f (scope:rest) =
@@ -2253,7 +2276,7 @@ updateSymbolInScopes name f (scope:rest) =
     then map (\(n, t, isVar) -> if n == name then (n, f t, isVar) else (n, t, isVar)) scope : rest
     else scope : updateSymbolInScopes name f rest
 
--- Atualiza entrada (global) com novo tipo para variável
+-- atualiza entrada (global) com novo tipo para variável
 updateEntry :: String -> Type -> [Symbol] -> [Symbol]
 updateEntry _ _ [] = []
 updateEntry name newVal ((n, t, isVar) : rest)
@@ -2262,10 +2285,10 @@ updateEntry name newVal ((n, t, isVar) : rest)
     else (n, newVal, isVar) : rest
   | otherwise = (n, t, isVar) : updateEntry name newVal rest
 
--- Atualiza tipo aninhado (recursivamente) pela cadeia de AccessStep
+-- atualiza tipo aninhado (recursivamente) pela cadeia de AccessStep
 update_nested_type :: Type -> [AccessStep] -> Type -> (Int, Int) -> Type
 
--- Atualiza campo de record
+-- atualiza campo de record
 update_nested_type (Record name fields) (AccessField (Id field_name _) : rest) new_val pos =
   Record name $ map (\(fname, ftype) ->
     if fname == field_name then
@@ -2273,7 +2296,7 @@ update_nested_type (Record name fields) (AccessField (Id field_name _) : rest) n
       else (fname, update_nested_type ftype rest new_val pos)
     else (fname, ftype)) fields
 
--- Atualiza campo de enumeration
+-- atualiza campo de enumeration
 update_nested_type (Enumeration name fields) (AccessField (Id label_name _) : rest) new_val pos =
   Enumeration name $ map (\(lname, ltype) ->
     if lname == label_name then
@@ -2281,7 +2304,7 @@ update_nested_type (Enumeration name fields) (AccessField (Id label_name _) : re
       else (lname, update_nested_type ltype rest new_val pos)
     else (lname, ltype)) fields
 
--- Atualiza elemento de vetor
+-- atualiza elemento de vetor
 update_nested_type (Vector baseType elems) (AccessIndex idx : rest) new_val pos =
   if idx < 0 || idx >= length elems then
     error $ "index " ++ show idx ++ " out of bounds in vector; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
@@ -2291,25 +2314,25 @@ update_nested_type (Vector baseType elems) (AccessIndex idx : rest) new_val pos 
     Vector baseType (replaceAt idx (update_nested_type (elems !! idx) rest new_val pos) elems)
 
 -- Atualiza elemento de matriz
-update_nested_type (Matrix baseType rows) (AccessIndex2D i j : rest) new_val pos =
+update_nested_type (Matrix baseType rows (row_count, col_count)) (AccessIndex2D i j : rest) new_val pos =
   if i < 0 || i >= length rows || j < 0 || j >= length (rows !! i) then
     error $ "index (" ++ show i ++ "," ++ show j ++ ") out of bounds in matrix; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
   else if null rest then
-    Matrix baseType (replaceAt i (replaceAt j new_val (rows !! i)) rows)
+    Matrix baseType (replaceAt i (replaceAt j new_val (rows !! i)) rows) (row_count, col_count)
   else
     let oldVal = (rows !! i) !! j
         updatedRow = replaceAt j (update_nested_type oldVal rest new_val pos) (rows !! i)
-    in Matrix baseType (replaceAt i updatedRow rows)
+    in Matrix baseType (replaceAt i updatedRow rows) (row_count, col_count)
 
--- Erro para acessos inválidos
+-- erro para acessos inválidos
 update_nested_type t (step:_) _ (line, col) =
   error $ "cannot assign to " ++ show step ++ " in type " ++ show t ++ "; line " ++ show line ++ ", column " ++ show col
 
--- Atualiza tipo de símbolo com cadeia AccessStep (wrapper para update_nested_type)
+-- atualiza tipo de símbolo com cadeia AccessStep (wrapper para update_nested_type)
 updateNestedTypeInSymbol :: [AccessStep] -> Type -> (Int, Int) -> Type -> Type
 updateNestedTypeInSymbol steps newVal pos oldType = update_nested_type oldType steps newVal pos
 
--- Substitui elemento na lista na posição idx
+-- substitui elemento na lista na posição idx
 replaceAt :: Int -> a -> [a] -> [a]
 replaceAt idx newVal xs =
   take idx xs ++ [newVal] ++ drop (idx + 1) xs
@@ -2331,7 +2354,7 @@ compare_type_base first_type second_type = case (first_type, second_type) of
   (Record first_record _, Record second_record _) -> first_record == second_record
   (Enumeration first_enumeration _, Enumeration second_enumeration _) -> first_enumeration == second_enumeration
   (Vector t1 _, Vector t2 _) -> compare_type_base t1 t2
-  (Matrix t1 _, Matrix t2 _) -> compare_type_base t1 t2
+  (Matrix t1 _ (rows, cols), Matrix t2 _ (rows2, cols2)) -> compare_type_base t1 t2 && rows == rows2 && cols == cols2 
   _                          -> False
 
 extract_base_type :: Type -> Type
@@ -2343,7 +2366,7 @@ extract_base_type t = case t of
   Record name _ -> Record name []
   Enumeration name _ -> Record name []
   Vector t _ -> Vector t []
-  Matrix t _ -> Matrix t []
+  Matrix t _ (rows, cols) -> Matrix t [[]] (rows, cols)
 
 is_type_vector :: Type -> Bool
 is_type_vector (Vector _ _) = True
@@ -2362,6 +2385,11 @@ get_id_name :: Token -> String
 get_id_name (Id name _) = name
 get_id_name _ = ""
 
+extract_matrix_dimensions :: (Type, Type) -> (Int, Int) -> (Int, Int)
+extract_matrix_dimensions (t1, t2) (line, col) = case (t1, t2) of
+  (Integer x, Integer y) -> (x, y)
+  _ -> error $ "matrix dimensions must be defined both as int values; line: " ++ show line ++ "; column: " ++ show col
+
 --- funções para auxiliar na impressão de mensagens de erro
 
 show_pretty_types :: Type -> String
@@ -2372,7 +2400,8 @@ show_pretty_types t = case t of
   Boolean _ -> "bool"
   Record name _ -> name
   Enumeration name _ -> name
-  Matrix inner_type _ -> "matrix<"++ show_pretty_types inner_type ++ ">"
+  Matrix inner_type _ (rows, cols) -> "matrix<"++ show_pretty_types inner_type ++ 
+    " : " ++ show rows ++ ", " ++ show cols ++ ">"
   Vector inner_type _ -> "vector<" ++ show_pretty_types inner_type ++ ">"
 
 show_pretty_type_values :: Type -> String
@@ -2384,7 +2413,7 @@ show_pretty_type_values t = case t of
   Record name fields -> name ++ " (" ++ show_fields fields ++ ")"
   Enumeration name values -> name ++ " (" ++ show_fields values ++ ")"
   Vector inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
-  Matrix inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
+  Matrix inner_type elements _ -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
 
 -- função auxiliar para imprimir os campos/labels formatados
 
