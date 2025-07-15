@@ -1,0 +1,153 @@
+struct BinarySearchTree {
+    tree vector<int>;
+}
+
+function left_child(index int) int {
+    return 2 * index + 1;
+}
+
+function right_child(index int) int {
+    return 2 * index + 2;
+}
+
+procedure ensure_size(&bst BinarySearchTree, index int) {
+    while (length(bst.tree) <= index) {
+        bst.tree = bst.tree + -1;
+    }
+}
+
+procedure insert_recursive(&bst BinarySearchTree, index int, value int) {
+    ensure_size(bst, index);
+
+    if (bst.tree[index] == -1) {
+        bst.tree[index] = value;
+    } else {
+        if (value < bst.tree[index]) {
+            insert_recursive(bst, left_child(index), value);
+        } else {
+            insert_recursive(bst, right_child(index), value);
+        }
+    }
+}
+
+procedure insert(&bst BinarySearchTree, value int) {
+    insert_recursive(bst, 0, value);
+}
+
+procedure insert_values(&bst BinarySearchTree, values vector<int>) {
+    for (i int = 0; i < length(values); i += 1) {
+        insert(bst, values[i]);
+    }
+}
+
+function min_recursive(bst BinarySearchTree, index int, &level int) int {
+    if (index < length(bst.tree)) {
+        if (bst.tree[index] != -1) {
+            left int = left_child(index);
+
+            if (left < length(bst.tree)) {
+                if (bst.tree[left] != -1) {
+                    level += 1;
+                    return min_recursive(bst, left, level);
+                }
+            }
+
+            return bst.tree[index];
+        }
+    }
+
+    return -1;
+}
+
+function min(bst BinarySearchTree, &level int) int {
+    level = 1;
+    return min_recursive(bst, 0, level);
+}
+
+function max_recursive(bst BinarySearchTree, index int, &level int) int {
+    if (index < length(bst.tree)) {
+        if (bst.tree[index] != -1) {
+            right int = right_child(index);
+
+            if (right < length(bst.tree)) {
+                if (bst.tree[right] != -1) {
+                    level += 1;
+                    return max_recursive(bst, right, level);
+                }
+            }
+
+            return bst.tree[index];
+        }
+    }
+
+    return -1;
+}
+
+function max(bst BinarySearchTree, &level int) int {
+    level = 1;
+    return max_recursive(bst, 0, level);
+}
+
+procedure print_tree_by_level(&bst BinarySearchTree) {
+    level int = 0;
+    start int = 0;
+
+    len int = length(bst.tree);
+
+    while (start < len) {
+        count int = 2 ^ level;
+        end int;
+        if (start + count > len) {
+            end = len;
+        } else {
+            end = start + count;
+        }
+
+        print("Level " + (level + 1) + ":");
+
+        for (i int = start; i < end; i += 1) {
+            if (bst.tree[i] != -1) {
+                print(bst.tree[i]);
+            }
+        }
+
+        print();
+
+        start += count;
+        level += 1;
+    }
+}
+
+procedure main() {
+    data vector<int>;
+    bst BinarySearchTree;
+
+    data = data + 8;
+    data = data + 3;
+    data = data + 1;
+    data = data + 10;
+    data = data + 6;
+    data = data + 4;
+    data = data + 7;
+    data = data + 14;
+    data = data + 13;
+
+    print("Inserting into Binary Search Tree: " + data);
+    insert_values(bst, data);
+
+    print();
+    
+    level int;
+
+    min_val int = min(bst, level);
+    print("Min: " + min_val + " at level " + level);
+
+    max_val int = max(bst, level);
+    print("Max: " + max_val + " at level " + level);
+
+    print();
+
+    print("Printing tree level by level: \n");
+
+    print_tree_by_level(bst);
+}
