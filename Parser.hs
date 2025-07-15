@@ -467,7 +467,7 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  s <- getState
+  -- s <- getState
   -- print_symtable
   -- print_types
   -- print_subprograms
@@ -1283,7 +1283,7 @@ do_mul_op (line, column) = \a b -> case (a, b) of
   -- matrix multiplication
   (Matrix t1 aRows, Matrix t2 bRows)
     | t1 /= t2 -> error $ binary_type_error "*" a b (line, column)
-    | null aRows || null bRows || null (head bRows) -> 
+    | null aRows || null bRows || null (head bRows) ->
         error $ "size error: cannot multiply empty matrices at line " ++ show line ++ ", col " ++ show column
     | length (head aRows) /= length bRows ->
         error $ "size error: incompatible matrix dimensions for multiplication at line " ++ show line ++ ", col " ++ show column
@@ -1552,8 +1552,8 @@ while = do
   inputAfter <- getInput
   g <- bracketRightToken
   let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
-  if exec
-    then run_loop False condTokens bodyTokens (line, column) Nothing
+  if exec 
+    then run_loop False condTokens bodyTokens [] (line, column) Nothing
     else return Nothing
 
 repeat_until :: ParsecT [Token] MemoryState IO (Maybe Type)
@@ -1576,13 +1576,14 @@ repeat_until = do
     j <- semiColonToken
     let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
     let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
-    if exec
-        then run_loop True condTokens bodyTokens (line, column) c
+    if exec 
+        then run_loop True condTokens bodyTokens [] (line, column) c
         else return c
 
-run_loop :: Bool -> [Token] -> [Token] -> (Int, Int) -> (Maybe Type) -> ParsecT [Token] MemoryState IO (Maybe Type)
-run_loop negateCondition condTokens bodyTokens (line, column) previous_return = do
+run_loop :: Bool -> [Token] -> [Token] -> [Token] -> (Int, Int) -> (Maybe Type) -> ParsecT [Token] MemoryState IO (Maybe Type)
+run_loop negateCondition condTokens bodyTokens incrementTokens (line, column) previous_return = do
   updateState enter_scope
+
   state <- getState
   condResult <- lift $ runParserT expression state "" condTokens
   condBool <- case condResult of
@@ -1590,44 +1591,69 @@ run_loop negateCondition condTokens bodyTokens (line, column) previous_return = 
     Right condExpr -> case check_condition "loop" (line, column) condExpr of
       Left err -> error err
       Right boolVal -> return (if negateCondition then not boolVal else boolVal)
-  if condBool
+  
+  return_val <- if condBool
     then do
-      state' <- getState
-      result <- lift $ runParserTWithState stmts state' bodyTokens
+      bodyState <- getState
+      result <- lift $ runParserTWithState stmts bodyState bodyTokens
       case result of
         Left err -> error (show err)
-        Right (current_return, newState) -> do
-          putState newState
+        Right (current_return, bodyResultState) -> do
+          putState bodyResultState
+
+          incrementState <- getState
+          incrementResult <- lift $ runParserTWithState for_assign incrementState incrementTokens
+          case incrementResult of
+            Left err -> error (show err)
+            Right (_, afterIncrementState) -> putState afterIncrementState
+
           updateState exit_scope
           case current_return of
               Just a -> return current_return
-              Nothing -> run_loop negateCondition condTokens bodyTokens (line, column) current_return
+              Nothing -> run_loop negateCondition condTokens bodyTokens incrementTokens (line, column) current_return
     else do
       updateState exit_scope
       return previous_return
 
+  return return_val
+
 for :: ParsecT [Token] MemoryState IO (Maybe Type)
 for = do
   a <- forToken
-  b <- parenLeftToken
-  c <- for_variable_initialization
-  d <- for_condition
+  b@(ParenLeft (line, column)) <- parenLeftToken
+  updateState enter_scope
+  c <- variable_declaration_assignment
+  inputBeforeCond <- getInput
+  cond <- expression
+  inputAfterCond <- getInput
   e <- semiColonToken
-  f <- for_assign
+  beforeAssign <- getState
+  inputBeforeAssign <- getInput
+  _ <- for_assign
+  inputAfterAssign <- getInput
+  putState beforeAssign
   g <- parenRightToken
   h <- bracketLeftToken
-  i <- stmts
+  exec <- executing <$> getState
+  inputBeforeBody <- getInput
+  updateState (\st -> st { executing = False })
+  updateState enter_scope
+  body <- stmts
+  updateState exit_scope
+  updateState (\st -> st { executing = exec })
+  inputAfterBody <- getInput
   j <- bracketRightToken
-  return i
 
-for_variable_initialization :: ParsecT [Token] MemoryState IO [Token]
-for_variable_initialization =
-  try (do
-    a <- for_assign
-    b <- semiColonToken
-    return (a ++ [b])
-  )
-  -- <|> try variable_declaration_assignment
+  let bodyTokens = take (length inputBeforeBody - length inputAfterBody) inputBeforeBody
+  let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
+  let assignTokens = take (length inputBeforeAssign - length inputAfterAssign) inputBeforeAssign
+
+  return_value <- if exec
+    then run_loop False condTokens bodyTokens assignTokens (line, column) Nothing
+    else return Nothing
+
+  updateState exit_scope
+  return return_value
 
 for_condition :: ParsecT [Token] MemoryState IO [Token]
 for_condition =
@@ -1645,21 +1671,23 @@ for_condition =
     return [a]
   )
 
-for_assign :: ParsecT [Token] MemoryState IO [Token]
-for_assign =
-  try (do
-    a <- idToken
-    b <- all_assign_tokens
-    c <- expression
-    return [a]
-  )
-  <|>
-  try (do
-    a <- idToken
-    b <- all_assign_tokens
-    c <- expression
-    return [a]
-  )
+for_assign :: ParsecT [Token] MemoryState IO (Maybe Type)
+for_assign = try $ do
+  (access_type, token_chain) <- access_chain
+  assign_function <- all_assign_tokens
+  b <- expression
+  s <- getState
+  let access_base_type = extract_base_type access_type
+      expr_base_type = extract_base_type b
+      (Id _ (line, col)) = head token_chain
+      new_value = assign_function (line, col) access_type b
+  if access_base_type == expr_base_type
+    then do
+      when (executing s) $
+       updateState (symtable_update_by_access_chain token_chain new_value)
+      return Nothing
+    else
+      error $ assign_type_error_msg access_type b (line, col)
 
 conditional :: ParsecT [Token] MemoryState IO (Maybe Type)
 conditional = if_else <|> match_case
@@ -1668,14 +1696,14 @@ if_else :: ParsecT [Token] MemoryState IO (Maybe Type)
 if_else = do
   (first, cond) <- cond_if
   (has_else, next) <- cond_else cond
-
+  
   returns_same_type <- case (first, next) of
     (Just a, Just b) -> return $ compare_type_base a b
     (_, _) -> return False
-
+  
   if has_else && not returns_same_type
     then return Nothing
-    else if cond
+    else if cond 
         then return first
         else return next
 
