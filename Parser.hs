@@ -574,14 +574,8 @@ variable_declaration = do
   a@(Id name (line, col)) <- idToken
   b <- all_possible_type_tokens
   c <- semiColonToken
-  s <- getState
-  if executing s
-    then do
-      updateState (insert_symbol (name, b, True) (line, col))
-      return (name, b, True)
-    else do
-      updateState (insert_symbol (name, normalize_types b, True) (line, col))
-      return (name, normalize_types b, True)
+  updateState (insert_symbol (name, b, True) (line, col))
+  return (name, b, True)
 
 variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declaration_assignment = do
@@ -2345,16 +2339,6 @@ get_type_name _ = ""
 get_id_name :: Token -> String
 get_id_name (Id name _) = name
 get_id_name _ = ""
-
-normalize_types :: Type -> Type
-normalize_types (Integer _) = Integer 1
-normalize_types (Floating _) = Floating 1.0
-normalize_types other = other
-
-validate_non_zero :: Type -> Bool
-validate_non_zero (Integer 0)  = False
-validate_non_zero (Floating 0.0) = False
-validate_non_zero t = True
 
 --- funções para auxiliar na impressão de mensagens de erro
 
