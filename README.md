@@ -1,12 +1,12 @@
-# Taylor: A Linguagem de Programação Intuitiva para Iniciantes em Desenvolvimento Web.
+# Lupita: A Linguagem de Programação Intuitiva para Iniciantes em Desenvolvimento Web.
 
 ## Resumo
 
-A Taylor é uma linguagem de programação desenvolvida com o propósito de atender um público iniciante em programação, com o objetivo em facilitar a compreensão dos conceitos através de uma linguagem que não cause dificuldades para uma pessoa que esteja iniciando, com foco em pessoas que queiram seguir a área de desenvolvimento web.
+A Lupita é uma linguagem de programação desenvolvida com o propósito de atender um público iniciante em programação, com o objetivo em facilitar a compreensão dos conceitos através de uma linguagem que não cause dificuldades para uma pessoa que esteja iniciando, com foco em pessoas que queiram seguir a área de desenvolvimento web.
 
 ## Implementação
 
-O desenvolvimento da Taylor seguiu uma abordagem estruturada: inicialmente, a gramática da linguagem foi projetada utilizando BNF (Backus-Naur Form). Em seguida, como uma linguagem interpretada, a Taylor foi implementada em **Haskell**, utilizando **Alex** para a construção do analisador léxico e **Parsec** para definir as estruturas sintáticas e semânticas.
+O desenvolvimento da Lupita seguiu uma abordagem estruturada: inicialmente, a gramática da linguagem foi projetada utilizando BNF (Backus-Naur Form). Em seguida, como uma linguagem interpretada, a Lupita foi implementada em **Haskell**, utilizando **Alex** para a construção do analisador léxico e **Parsec** para definir as estruturas sintáticas e semânticas.
 
 ## Uso do interpretador
 
@@ -74,11 +74,11 @@ alex Lexer.x && ghc Parser.hs -o parser
 
 ### Execução
 
-Depois de compilar os arquivos, você pode executar o interpretador Taylor especificando o caminho para o seu arquivo de programa (.pe) (há alguns exemplos de programas na pasta `/tasks`):
+Depois de compilar os arquivos, você pode executar o interpretador Lupita especificando o caminho para o seu arquivo de programa (.pe) (há alguns exemplos de programas na pasta `/tasks`):
 
 ```sh
-# Executando um programa Taylor
-# Substitua <arquivo.pe> pelo caminho do seu programa Taylor
+# Executando um programa Lupita
+# Substitua <arquivo.pe> pelo caminho do seu programa Lupita
 ./parser <arquivo.pe>
 
 # Exemplo: Executar o programa '1.pe' localizado na pasta 'tasks'
