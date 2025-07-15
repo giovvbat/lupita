@@ -26,6 +26,7 @@ tokens :-
   enum                                 { \p s -> Enum (getLC p) }
   print                                { \p s -> Print (getLC p) }
   scan                                 { \p s -> Scan (getLC p) }
+  length                               { \p s -> Length (getLC p) }
   const                                { \p s -> Const (getLC p) }
   guess                                { \p s -> Guess (getLC p) }
   int                                  { \p s -> Type s (getLC p) }
@@ -104,6 +105,7 @@ data Token =
   PowAssign (Int, Int) |
   Vectr  (Int, Int) |
   Matrx  (Int, Int) |
+  Length (Int, Int) |
   Print   (Int, Int) |
   Scan    (Int, Int) |
   Add    (Int, Int) |

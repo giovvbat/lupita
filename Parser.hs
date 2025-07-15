@@ -19,7 +19,7 @@ import Text.Parsec
 import Data.Char (toLower)
 import Data.List (nub, (\\), find, intersperse, intercalate, transpose)
 import Control.Monad.Trans.Class (lift)
-import Debug.Trace (traceShow)
+import Debug.Trace (traceShow, trace)
 import System.Environment
 
 -- nome, tipo, escopo, tempo de vida, valor, endereço
@@ -66,6 +66,10 @@ data ActivationRecord = ActivationRecord {
 
 data ScopeType = GlobalScope | LocalScope
   deriving (Show, Eq)
+
+data AccessStep = AccessId Token | AccessIndex Int | AccessIndex2D Int Int| AccessField Token
+  deriving (Show)
+
 
 data MemoryState = MemoryState {
   globals :: [Symbol],                -- variáveis globais
@@ -433,6 +437,12 @@ scanToken = tokenPrim show update_pos get_token
     get_token (Scan p) = Just (Scan p)
     get_token _ = Nothing
 
+lengthToken :: ParsecT [Token] st IO Token
+lengthToken = tokenPrim show update_pos get_token
+  where
+    get_token (Length p) = Just (Length p)
+    get_token _ = Nothing
+
 continueToken :: ParsecT [Token] st IO Token
 continueToken = tokenPrim show update_pos get_token
   where
@@ -540,57 +550,18 @@ enum = do
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
-  first <- try user_defined_types_declaration
+  first@(name, t, is_var) <- try variable_declarations
   next <- remaining_user_defined_types_declarations
-  return (first : next)
+  return ((name, t) : next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 remaining_user_defined_types_declarations =
   (do
-    first <- try user_defined_types_declaration
+    first@(name, t, is_var) <- try variable_declarations
     rest <- remaining_user_defined_types_declarations
-    return (first : rest)
+    return ((name, t) : rest)
   )
   <|> return []
-
-user_defined_types_declaration :: ParsecT [Token] MemoryState IO (String, Type)
-user_defined_types_declaration =
-  try (do
-    a@(Id name (line, col)) <- idToken
-    b <- all_possible_type_tokens
-    c <- assignToken
-    d <- expression
-    e <- semiColonToken
-    s <- getState
-    let expr_base_type = extract_base_type d
-    let declared_base_type = extract_base_type b
-    if declared_base_type == expr_base_type
-      then do
-        if validate_non_zero d
-          then do
-            updateState (insert_symbol (name, d, True) (line, col))
-            return (name, d)
-        else
-          error $ "no user defined fields may be declared as zero; line: " ++ show line ++ ", column: " ++ show col
-      else
-        error $ variable_type_error_msg name b d (line, col)
-  )
-  <|>
-  try (do
-    a@(Id name (line, col)) <- idToken
-    b <- guessToken
-    c <- assignToken
-    d <- expression
-    e <- semiColonToken
-    s <- getState
-    let expr_base_type = extract_base_type d
-    if validate_non_zero d
-      then do
-        updateState (insert_symbol (name, d, True) (line, col))
-        return (name, d)
-    else
-      error $ "no user defined fields may be declared as zero; line: " ++ show line ++ ", column: " ++ show col
-  )
 
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
@@ -926,14 +897,16 @@ assign = try $ do
   b <- expression
   _ <- semiColonToken
   s <- getState
+  (Id _ (line, col)) <- case token_chain of
+    (AccessId tok@(Id _ pos)) : _ -> return tok
+    _ -> fail "internal error: expected access_id as the first access step!"
   let access_base_type = extract_base_type access_type
       expr_base_type = extract_base_type b
-      (Id _ (line, col)) = head token_chain
       new_value = assign_function (line, col) access_type b
   if access_base_type == expr_base_type
     then do
       when (executing s) $
-       updateState (symtable_update_by_access_chain token_chain new_value)
+        updateState (symtable_update_by_access_chain token_chain new_value)
       return Nothing
     else
       error $ assign_type_error_msg access_type b (line, col)
@@ -963,23 +936,22 @@ procedure_call = try $ do
           "; line: " ++ show line ++ ", column: " ++ show col
 
       zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
-          case passmode of
-            ByReference ->
-              case actual of
-                Left (t, tok) ->
-                  case tok of
-                    (tokFirst:_) -> do
-                      mIsConst <- is_name_constant tokFirst
-                      case mIsConst of
-                        Just True ->
-                          error $ "actual parameter \"" ++ get_id_name tokFirst ++
-                            "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
-                        _ -> return ()
-                    _ -> return ()
-                Right _ ->
-                  error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
-            ByValue ->
-              return ()
+        case passmode of
+          ByReference ->
+            case actual of
+              Left (t, access_steps) ->
+                case access_steps of
+                  (AccessId tokFirst : _) -> do
+                    mIsConst <- is_name_constant tokFirst
+                    case mIsConst of
+                      Just True ->
+                        error $ "actual parameter \"" ++ get_id_name tokFirst ++
+                          "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
+                      _ -> return ()
+                  _ -> return ()  -- não começa com access_id
+              Right _ ->
+                error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
+          ByValue -> return ()
         ) params args
 
       let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
@@ -1225,20 +1197,31 @@ add_sub_op =
 
 do_add_op :: (Int, Int) -> (Type -> Type -> Type)
 do_add_op (line, col) = \a b -> case (a, b) of
+  -- numérico
   (Integer x, Integer y) -> Integer $ x + y
   (Floating x, Integer y) -> Floating $ x + fromIntegral y
   (Integer x, Floating y) -> Floating $ fromIntegral x + y
   (Floating x, Floating y) -> Floating $ x + y
+  -- string
   (Str x, Str y) -> Str $ x ++ y
   (Str x, y) -> Str $ x ++ type_to_string y
   (x, Str y) -> Str $ type_to_string x ++ y
-  -- matrix addition
+  -- matriz + matriz
   (Matrix t1 xs, Matrix t2 ys)
     | t1 /= t2 -> error $ binary_type_error "+" a b (line, col)
     | length xs /= length ys -> error $ "size error: matrices with different number of rows; line " ++ show line ++ ", column " ++ show col
     | any (\(rowX, rowY) -> length rowX /= length rowY) (zip xs ys) ->
         error $ "size error: matrices with different number of columns; line " ++ show line ++ ", column " ++ show col
     | otherwise -> Matrix t1 (zipWith (zipWith (do_add_op (line, col))) xs ys)
+  -- vetor + valor
+  (Vector t elems, val)
+    | (extract_base_type t) /= (extract_base_type val) -> error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values val ++ " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
+    | otherwise -> Vector t (elems ++ [val])
+  -- valor + vetor
+  (val, Vector t elems)
+    | (extract_base_type t) /= (extract_base_type val) -> error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values val ++ " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
+    | otherwise -> Vector t (elems ++ [val])
+  -- fallback
   (x, y) -> error $ binary_type_error "+" x y (line, col)
 
 do_number_add_op :: (Int, Int) -> (Type -> Type -> Type)
@@ -1372,42 +1355,75 @@ all_comparison_ops =
   try non_prioritary_comparison_ops
   <|> try prioritary_comparison_ops
 
-access_chain :: ParsecT [Token] MemoryState IO (Type, [Token])
+access_chain :: ParsecT [Token] MemoryState IO (Type, [AccessStep])
 access_chain = do
   first_id@(Id name (line, col)) <- idToken
   st <- getState
   let current_type = lookup_variable first_id st
-  (final_type, chain_tokens) <- access_chain_tail current_type (line, col)
-  return (final_type, first_id : chain_tokens)
+  (final_type, chain_steps) <- access_chain_tail name current_type (line, col)
+  return (final_type, AccessId first_id : chain_steps)
 
-access_chain_tail :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
-access_chain_tail current_type pos = do
-  has_dot <- optionMaybe (lookAhead dotToken)
-  case has_dot of
-    Just _ -> user_defined_types_field_acces current_type pos
-    Nothing -> return (current_type, [])
+access_chain_tail :: String -> Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [AccessStep])
+access_chain_tail varName current_type pos = do
+  next <- optionMaybe (lookAhead anyToken)
+  case next of
+    Just (Dot _)        -> user_defined_types_field_access varName current_type pos >>= continue
+    Just (BraceLeft _)  -> indexed_access varName current_type pos >>= continue
+    _                   -> return (current_type, [])
+  where
+    continue (new_type, steps) = do
+      (final_type, rest) <- access_chain_tail varName new_type pos
+      return (final_type, steps ++ rest)
 
-user_defined_types_field_acces :: Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
-user_defined_types_field_acces (Record name fields) pos = do
-  (field_type, tokens) <- access_from_user_defined_types_fields name fields pos
-  (final_type, rest) <- access_chain_tail field_type pos
-  return (final_type, tokens ++ rest)
-user_defined_types_field_acces (Enumeration name fields) pos = do
-  (field_type, tokens) <- access_from_user_defined_types_fields name fields pos
-  (final_type, rest) <- access_chain_tail field_type pos
-  return (final_type, tokens ++ rest)
-user_defined_types_field_acces t (line, col) =
-  error $ "type " ++ show_pretty_type_values t ++ " does not support field access" ++
-    "; line: " ++ show line ++ ", column: " ++ show col
+indexed_access :: String -> Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [AccessStep])
+indexed_access varName (Vector t elems) (line, col) = do
+  _ <- braceLeftToken
+  index_expr <- expression
+  _ <- braceRightToken
+  case index_expr of
+    Integer i ->
+      if i < 0 || i >= length elems
+        then error $ "index " ++ show i ++ " out of bounds for vector; line " ++ show line ++ ", column " ++ show col
+        else return (elems !! i, [AccessIndex i])
+    _ -> error $ "index must be an integer for vector access; line " ++ show line ++ ", column " ++ show col
+indexed_access varName (Matrix t rows) (line, col) = do
+  _ <- braceLeftToken
+  i_expr <- expression
+  _ <- commaToken
+  j_expr <- expression
+  _ <- braceRightToken
+  case (i_expr, j_expr) of
+    (Integer i, Integer j) ->
+      if i < 0 || i >= length rows
+        then error $ "row index " ++ show i ++ " out of bounds for matrix \"" ++ varName ++ "\"; line " ++ show line ++ ", column " ++ show col
+      else if j < 0 || j >= length (rows !! i)
+        then error $ "column index " ++ show j ++ " out of bounds for matrix \"" ++ varName ++ "\"; line " ++ show line ++ ", column " ++ show col
+      else return (t, [AccessIndex2D i j])
+    _ -> error $ "both indices must be integers for matrix access; line " ++ show line ++ ", column " ++ show col
+indexed_access _ t (line, col) =
+  error $ "type " ++ show_pretty_type_values t ++ " does not support indexed access; line " ++ show line ++ ", column " ++ show col
 
-access_from_user_defined_types_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [Token])
+user_defined_types_field_access :: String -> Type -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, [AccessStep])
+user_defined_types_field_access varName (Record name fields) pos = do
+  (field_type, field_token) <- access_from_user_defined_types_fields name fields pos
+  (final_type, rest) <- access_chain_tail varName field_type pos
+  return (final_type, AccessField field_token : rest)
+
+user_defined_types_field_access varName (Enumeration name fields) pos = do
+  (field_type, field_token) <- access_from_user_defined_types_fields name fields pos
+  (final_type, rest) <- access_chain_tail varName field_type pos
+  return (final_type, AccessField field_token : rest)
+
+user_defined_types_field_access _ t (line, col) =
+  error $ "type " ++ show_pretty_type_values t ++ " does not support field access; line " ++ show line ++ ", column " ++ show col
+
+access_from_user_defined_types_fields :: String -> [(String, Type)] -> (Int, Int) -> ParsecT [Token] MemoryState IO (Type, Token)
 access_from_user_defined_types_fields type_name entries _ = do
   _ <- dotToken
   field@(Id field_name (line, col)) <- idToken
   case lookup field_name entries of
-    Just t  -> return (t, [field])
-    Nothing -> error $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name ++
-      "; line: " ++ show line ++ ", column: " ++ show col
+    Just t  -> return (t, field)
+    Nothing -> error $ "cannot access field \"" ++ field_name ++ "\" on value of type " ++ type_name ++ "; line " ++ show line ++ ", column " ++ show col
 
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call = try $ do
@@ -1435,23 +1451,22 @@ function_call = try $ do
           "; line: " ++ show line ++ ", column: " ++ show col
 
       zipWithM_ (\(formal_name, formal_type, passmode) actual -> do
-          case passmode of
-            ByReference ->
-              case actual of
-                Left (t, tok) ->
-                  case tok of
-                    (tokFirst:_) -> do
-                      mIsConst <- is_name_constant tokFirst
-                      case mIsConst of
-                        Just True ->
-                          error $ "actual parameter \"" ++ get_id_name tokFirst ++
-                            "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
-                        _ -> return ()
-                    _ -> return ()
-                Right _ ->
-                  error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
-            ByValue ->
-              return ()
+        case passmode of
+          ByReference ->
+            case actual of
+              Left (t, access_steps) ->
+                case access_steps of
+                  (AccessId tokFirst : _) -> do
+                    mIsConst <- is_name_constant tokFirst
+                    case mIsConst of
+                      Just True ->
+                        error $ "actual parameter \"" ++ get_id_name tokFirst ++
+                          "\" is declared as constant and cannot be passed by reference; line " ++ show line ++ ", column: " ++ show col
+                      _ -> return ()
+                  _ -> return ()  -- não começa com access_id
+              Right _ ->
+                error $ "no literals may be used as by-reference parameters; line " ++ show line ++ ", column: " ++ show col
+          ByValue -> return ()
         ) params args
 
       let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
@@ -1499,15 +1514,15 @@ function_call = try $ do
         ) params args
 
       return ret
-  <|> try scan_function
+  <|> try native_function_calls
 
-actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
+actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [AccessStep]) Type]
 actual_params = do
   first <- actual_param
   next <- remaining_params
   return (first : next)
 
-remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [Token]) Type]
+remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [AccessStep]) Type]
 remaining_params =
   (do
     a <- commaToken
@@ -1517,7 +1532,7 @@ remaining_params =
   )
   <|> return []
 
-actual_param :: ParsecT [Token] MemoryState IO (Either (Type, [Token]) Type)
+actual_param :: ParsecT [Token] MemoryState IO (Either (Type, [AccessStep]) Type)
 actual_param =
   try (do
     a <- access_chain
@@ -1679,12 +1694,14 @@ for_assign = try $ do
   s <- getState
   let access_base_type = extract_base_type access_type
       expr_base_type = extract_base_type b
-      (Id _ (line, col)) = head token_chain
-      new_value = assign_function (line, col) access_type b
+  (Id _ (line, col)) <- case token_chain of
+    (AccessId tok@(Id _ pos)) : _ -> return tok
+    _ -> fail "internal error: expected access_id as the first access step!"
+  let new_value = assign_function (line, col) access_type b
   if access_base_type == expr_base_type
     then do
       when (executing s) $
-       updateState (symtable_update_by_access_chain token_chain new_value)
+        updateState (symtable_update_by_access_chain token_chain new_value)
       return Nothing
     else
       error $ assign_type_error_msg access_type b (line, col)
@@ -1924,6 +1941,19 @@ scan_function = do
     else return 0
   return $ Integer n
 
+vector_length_function :: ParsecT [Token] MemoryState IO Type
+vector_length_function = do
+  Length (line, col) <- lengthToken
+  _ <- parenLeftToken
+  expr <- expression
+  _ <- parenRightToken
+  if is_type_vector expr
+    then return (Integer (measure_vector_size expr))
+    else error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
+
+native_function_calls :: ParsecT [Token] MemoryState IO Type
+native_function_calls = try scan_function <|> try vector_length_function
+
 all_escapes_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 all_escapes_stmts = do
   a <- continueToken <|> leaveToken <|> breakToken
@@ -2139,85 +2169,39 @@ local_insert symbol@(name, _, _) (line, column) st =
     elemName :: String -> [Symbol] -> Bool
     elemName n = any (\(name', _, _) -> name' == n)
 
--- atualiza uma variável (ou campo aninhado) pela cadeia de acesso no estado atual
-symtable_update_by_access_chain :: [Token] -> Type -> MemoryState -> MemoryState
-symtable_update_by_access_chain [] _ st = st  -- nada a fazer
-symtable_update_by_access_chain [Id name pos] new_val st = symtable_update (Id name pos, new_val) st
-symtable_update_by_access_chain (Id base_name pos : rest) new_val st =
-  -- procura na localSymbols do topo do call_stack
+-- Atualiza variável ou campo aninhado pela cadeia de acesso
+symtable_update_by_access_chain :: [AccessStep] -> Type -> MemoryState -> MemoryState
+symtable_update_by_access_chain [] _ st = st -- nada a fazer
+
+-- Caso final: só AccessId = variável simples
+symtable_update_by_access_chain [AccessId idTok@(Id name pos)] new_val st =
+  symtable_update (idTok, new_val) st
+
+-- Caso geral: primeiro é AccessId (variável base), resto é cadeia aninhada
+symtable_update_by_access_chain (AccessId baseId@(Id base_name pos) : rest) new_val st =
   case call_stack st of
     [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name
     (ar : restStack) ->
       let localScopes = local_symbols ar
-          -- procura a variável base_name em algum escopo local (busca da mais interna para mais externa)
           foundLocal = findSymbolInScopes base_name localScopes
-          -- função auxiliar pra atualizar no localSymbols
           updatedLocals = case foundLocal of
-            Nothing -> localScopes  -- não atualiza localSymbols se não achar local
+            Nothing -> localScopes
             Just _  -> updateSymbolInScopes base_name (updateNestedTypeInSymbol rest new_val pos) localScopes
-      in
-        case foundLocal of
-          Just oldType ->
-            -- atualiza o ActivationRecord com a nova lista de locais atualizada
+      in case foundLocal of
+          Just _ ->
             let updatedAR = ar { local_symbols = updatedLocals }
-                st' = st { call_stack = updatedAR : restStack }
-            in st'
+            in st { call_stack = updatedAR : restStack }
           Nothing ->
-            -- se não achou localmente, tenta atualizar nas globais
             case lookup base_name [(n, v) | (n, v, _) <- globals st] of
               Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
               Just baseType ->
                 let updatedType = update_nested_type baseType rest new_val pos
                     updatedGlobals = updateEntry base_name updatedType (globals st)
                 in st { globals = updatedGlobals }
+
 symtable_update_by_access_chain _ _ st = st -- fallback seguro
 
--- função auxiliar: procura símbolo pelo nome nas listas de escopos (da mais interna para a mais externa)
-findSymbolInScopes :: String -> [[Symbol]] -> Maybe Type
-findSymbolInScopes _ [] = Nothing
-findSymbolInScopes name (scope:rest) =
-  case lookup name [(n, t) | (n, t, _) <- scope] of
-    Just typ -> Just typ
-    Nothing -> findSymbolInScopes name rest
-
--- atualiza o tipo de um símbolo na lista de escopos (somente primeiro escopo onde encontrar o símbolo)
-updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
-updateSymbolInScopes _ _ [] = []
-updateSymbolInScopes name f (scope:rest) =
-  if any (\(n, _, _) -> n == name) scope
-    then map (\(n, t, isVar) -> if n == name then (n, f t, isVar) else (n, t, isVar)) scope : rest
-    else scope : updateSymbolInScopes name f rest
-
-update_nested_type :: Type -> [Token] -> Type -> (Int, Int) -> Type
-update_nested_type (Record name fields) (Id field_name _ : rest) new_val pos =
-  Record name $ map (\(fname, ftype) ->
-    if fname == field_name then
-      if null rest then (fname, new_val)
-      else (fname, update_nested_type ftype rest new_val pos)
-    else (fname, ftype)) fields
-update_nested_type (Enumeration name fields) (Id label_name _ : rest) new_val pos =
-  Enumeration name $ map (\(lname, ltype) ->
-    if lname == label_name then
-      if null rest then (lname, new_val)
-      else (lname, update_nested_type ltype rest new_val pos)
-    else (lname, ltype)) fields
-update_nested_type t (_:_) _ (line, col) =
-  error $ "cannot assign to field in non-structured type: " ++ show_pretty_type_values t ++ "; line " ++ show line ++ ", column " ++ show col
-
--- atualiza o tipo aninhado de um símbolo (tipo -> tipo atualizado)
-updateNestedTypeInSymbol :: [Token] -> Type -> (Int, Int) -> Type -> Type
-updateNestedTypeInSymbol tokens newVal pos oldType = update_nested_type oldType tokens newVal pos
-
--- atualiza a lista de símbolos (globals) com novo tipo para variável
-updateEntry :: String -> Type -> [Symbol] -> [Symbol]
-updateEntry _ _ [] = []
-updateEntry name newVal ((n, t, isVar) : rest)
-  | n == name =
-    if not isVar then error $ "cannot assign to constant \"" ++ name ++ "\""
-    else (n, newVal, isVar) : rest
-  | otherwise = (n, t, isVar) : updateEntry name newVal rest
-
--- atualiza variável simples (sem cadeia de acesso) nas variáveis locais e globais
+-- Atualiza variável simples (sem cadeia aninhada)
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name pos, new_value) st =
   case call_stack st of
@@ -2226,18 +2210,95 @@ symtable_update (Id id_name pos, new_value) st =
       let localScopes = local_symbols ar
           foundLocal = findSymbolInScopes id_name localScopes
       in case foundLocal of
-        Just oldType ->
+        Just _ ->
           let updatedLocals = updateSymbolInScopes id_name (const new_value) localScopes
               updatedAR = ar { local_symbols = updatedLocals }
           in st { call_stack = updatedAR : restStack }
         Nothing ->
-          -- não achou local, tenta globais
           case lookup id_name [(n, t) | (n, t, _) <- globals st] of
             Nothing -> error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
-            Just oldType ->
+            Just _ ->
               let updatedGlobals = updateEntry id_name new_value (globals st)
               in st { globals = updatedGlobals }
-symtable_update _ st = st  -- fallback
+
+symtable_update _ st = st
+
+-- Busca símbolo pelo nome nas listas de escopos (da mais interna para mais externa)
+findSymbolInScopes :: String -> [[Symbol]] -> Maybe Type
+findSymbolInScopes _ [] = Nothing
+findSymbolInScopes name (scope:rest) =
+  case lookup name [(n, t) | (n, t, _) <- scope] of
+    Just typ -> Just typ
+    Nothing  -> findSymbolInScopes name rest
+
+-- Atualiza tipo do símbolo na primeira ocorrência encontrada na lista de escopos
+updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
+updateSymbolInScopes _ _ [] = []
+updateSymbolInScopes name f (scope:rest) =
+  if any (\(n, _, _) -> n == name) scope
+    then map (\(n, t, isVar) -> if n == name then (n, f t, isVar) else (n, t, isVar)) scope : rest
+    else scope : updateSymbolInScopes name f rest
+
+-- Atualiza entrada (global) com novo tipo para variável
+updateEntry :: String -> Type -> [Symbol] -> [Symbol]
+updateEntry _ _ [] = []
+updateEntry name newVal ((n, t, isVar) : rest)
+  | n == name =
+    if not isVar then error $ "cannot assign to constant \"" ++ name ++ "\""
+    else (n, newVal, isVar) : rest
+  | otherwise = (n, t, isVar) : updateEntry name newVal rest
+
+-- Atualiza tipo aninhado (recursivamente) pela cadeia de AccessStep
+update_nested_type :: Type -> [AccessStep] -> Type -> (Int, Int) -> Type
+
+-- Atualiza campo de record
+update_nested_type (Record name fields) (AccessField (Id field_name _) : rest) new_val pos =
+  Record name $ map (\(fname, ftype) ->
+    if fname == field_name then
+      if null rest then (fname, new_val)
+      else (fname, update_nested_type ftype rest new_val pos)
+    else (fname, ftype)) fields
+
+-- Atualiza campo de enumeration
+update_nested_type (Enumeration name fields) (AccessField (Id label_name _) : rest) new_val pos =
+  Enumeration name $ map (\(lname, ltype) ->
+    if lname == label_name then
+      if null rest then (lname, new_val)
+      else (lname, update_nested_type ltype rest new_val pos)
+    else (lname, ltype)) fields
+
+-- Atualiza elemento de vetor
+update_nested_type (Vector baseType elems) (AccessIndex idx : rest) new_val pos =
+  if idx < 0 || idx >= length elems then
+    error $ "index " ++ show idx ++ " out of bounds in vector; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+  else if null rest then
+    Vector baseType (replaceAt idx new_val elems)
+  else
+    Vector baseType (replaceAt idx (update_nested_type (elems !! idx) rest new_val pos) elems)
+
+-- Atualiza elemento de matriz
+update_nested_type (Matrix baseType rows) (AccessIndex2D i j : rest) new_val pos =
+  if i < 0 || i >= length rows || j < 0 || j >= length (rows !! i) then
+    error $ "index (" ++ show i ++ "," ++ show j ++ ") out of bounds in matrix; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+  else if null rest then
+    Matrix baseType (replaceAt i (replaceAt j new_val (rows !! i)) rows)
+  else
+    let oldVal = (rows !! i) !! j
+        updatedRow = replaceAt j (update_nested_type oldVal rest new_val pos) (rows !! i)
+    in Matrix baseType (replaceAt i updatedRow rows)
+
+-- Erro para acessos inválidos
+update_nested_type t (step:_) _ (line, col) =
+  error $ "cannot assign to " ++ show step ++ " in type " ++ show t ++ "; line " ++ show line ++ ", column " ++ show col
+
+-- Atualiza tipo de símbolo com cadeia AccessStep (wrapper para update_nested_type)
+updateNestedTypeInSymbol :: [AccessStep] -> Type -> (Int, Int) -> Type -> Type
+updateNestedTypeInSymbol steps newVal pos oldType = update_nested_type oldType steps newVal pos
+
+-- Substitui elemento na lista na posição idx
+replaceAt :: Int -> a -> [a] -> [a]
+replaceAt idx newVal xs =
+  take idx xs ++ [newVal] ++ drop (idx + 1) xs
 
 is_main_four_type :: Type -> Bool
 is_main_four_type t = case t of
@@ -2267,6 +2328,14 @@ extract_base_type t = case t of
   Enumeration name _ -> Record name []
   Vector t _ -> Vector t []
   Matrix t _ -> Matrix t []
+
+is_type_vector :: Type -> Bool
+is_type_vector (Vector _ _) = True
+is_type_vector _            = False
+
+measure_vector_size :: Type -> Int
+measure_vector_size (Vector _ elems) = length elems
+measure_vector_size _ = error "interal error: expected a vector type!"
 
 get_type_name :: Type -> String
 get_type_name (Record name _) = name

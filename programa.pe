@@ -1,8 +1,16 @@
 procedure main() {
-    y int=4;
-    while(y < 5) {
-        x int;
-        print(x);
-        y += 1;
-    }
+    b vector<vector<float>>;
+    a vector<float>;
+    c vector<float>;
+
+    a = a + 1.0;
+    c = c + 2.0;
+    
+    b = b + a;
+    b = b + c;
+
+    a = a + 3.0;
+    b[0] = a;
+
+    print(b);
 }
