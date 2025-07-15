@@ -591,8 +591,7 @@ variable_declaration_assignment = do
     then do
       updateState (insert_symbol (name, d, True) (line, col))
       return (name, d, True)
-    else
-      error $ variable_type_error_msg name b d (line, col)
+    else error $ variable_type_error_msg name b d (line, col)
 
 variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_guess_declaration_assignment = do

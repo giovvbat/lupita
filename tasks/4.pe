@@ -3,16 +3,55 @@ struct rational_t {
     den int;
 }
 
+function calculate_gcd(fst int, snd int) int {
+    if (fst < 0) { 
+        fst = -fst; 
+    }
+
+    if (snd < 0) {
+        snd = -snd; 
+    }
+
+    while (snd != 0) {
+        rest int = fst % snd;
+        fst = snd;
+        snd = rest;
+    }
+
+    return fst;
+}
+
+function simplify_rational(rational rational_t) rational_t {
+    divisor int = calculate_gcd(rational.num, rational.den);
+    num int = rational.num / divisor;
+    den int = rational.den / divisor;
+
+    if (den < 0) {
+        num = -num;
+        den = -den;
+    }
+
+    simplified_rational rational_t;
+    simplified_rational.num = num;
+    simplified_rational.den = den;
+
+    return simplified_rational;
+}
+
 function construct_rational(num int, den int) rational_t {
+    if (den == 0) {
+        print("careful: no divisions per zero are allowed!");
+    }
+
     fraction rational_t;
     fraction.num = num;
     fraction.den = den;
 
-    return fraction;
+    return simplify_rational(fraction);
 }
 
 function compare_rationals(fst rational_t, snd rational_t) bool {
-    return fst.num * snd.den == snd.num * fst.den;
+    return fst.num == snd.num && snd.den == fst.den;
 }
 
 function add_rationals(fst rational_t, snd rational_t) rational_t {
@@ -21,13 +60,13 @@ function add_rationals(fst rational_t, snd rational_t) rational_t {
     result.num = fst.num * snd.den + snd.num * fst.den;
     result.den = fst.den * snd.den;
 
-    return result;
+    return simplify_rational(result);
 }
 
 function negate_rational(fst rational_t) rational_t {
     fst.num = -fst.num;
 
-    return fst;
+    return simplify_rational(fst);
 }
 
 function sub_rationals(fst rational_t, snd rational_t) rational_t {
@@ -36,7 +75,7 @@ function sub_rationals(fst rational_t, snd rational_t) rational_t {
     result.num = fst.num * snd.den - snd.num * fst.den;
     result.den = fst.den * snd.den;
 
-    return result;
+    return simplify_rational(result);
 }
 
 function multiply_rationals(fst rational_t, snd rational_t) rational_t {
@@ -45,7 +84,7 @@ function multiply_rationals(fst rational_t, snd rational_t) rational_t {
     result.num = fst.num * snd.num;
     result.den = fst.den * snd.den;
 
-    return result;
+    return simplify_rational(result);
 }
 
 function inverse_rational(input rational_t) rational_t {
@@ -54,7 +93,7 @@ function inverse_rational(input rational_t) rational_t {
     result.num = input.den;
     result.den = input.num;
 
-    return result;
+    return simplify_rational(result);
 }
 
 function divide_rationals(fst rational_t, snd rational_t) rational_t {
@@ -63,7 +102,7 @@ function divide_rationals(fst rational_t, snd rational_t) rational_t {
     result.num = fst.num * snd.den;
     result.den = fst.den * snd.num;
 
-    return result;
+    return simplify_rational(result);
 }
 
 procedure main() {
@@ -95,5 +134,3 @@ procedure main() {
         print(fst_rat + " is not equal to " + snd_rat);
     }
 }
-
-// extra: simplificar; verificar divisão por zero
