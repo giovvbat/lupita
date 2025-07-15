@@ -1,16 +1,15 @@
 procedure main() {
-    b vector<vector<float>>;
-    a vector<float>;
-    c vector<float>;
-
-    a = a + 1.0;
-    c = c + 2.0;
+    a vector<vector<int>>;
     
-    b = b + a;
-    b = b + c;
+    for (i int = 0; i < 3; i += 1) {
+        line vector<int>;
 
-    a = a + 3.0;
-    b[0] = a;
+        for (j int = 0; j < 2; j += 1) {
+            line = line + (i + j);
+        }
 
-    print(b);
+        a = a + line;
+    }
+
+    print(a);
 }
