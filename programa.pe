@@ -1,15 +1,12 @@
-procedure main() {
-    a vector<vector<int>>;
-    
-    for (i int = 0; i < 3; i += 1) {
-        line vector<int>;
-
-        for (j int = 0; j < 2; j += 1) {
-            line = line + (i + j);
-        }
-
-        a = a + line;
+function factorial(n int) int {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * factorial(n - 1);
     }
-
-    print(a);
 }
+
+procedure main() {
+    print(factorial(4));
+}
+

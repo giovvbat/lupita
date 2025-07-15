@@ -1,0 +1,32 @@
+procedure mdc(n int, m int, &r int) {
+    if (m % n == 0) {
+        r = n;
+    } else {
+        if (n % m == 0) {
+            r = m;
+        } else {
+            if (m > n) {
+                mdc(n, m % n, r);
+            } else {
+                mdc(m, n % m, r);
+            }
+        }
+    }
+}
+
+procedure main() {
+    r int;
+
+    print("Digite o valor de n:");
+    n int = scan();
+
+    print("Digite o valor de m:");
+    m int = scan();
+
+    if (n <= 0 || m <= 0) {
+        print("Erro: ambos os números devem ser positivos.");
+    } else {
+        mdc(n, m, r);
+        print("O maior divisor comum entre " + n + " e " + m + " é igual a " + r);
+    }
+}
