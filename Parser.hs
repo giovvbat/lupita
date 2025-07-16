@@ -784,6 +784,11 @@ stmts = do
     Just n -> updateState (\st -> st { executing = False })
     Nothing -> return ()
   next <- remaining_stmts
+  
+  case (first, next) of
+      (Just n1, Just n2) -> unless (compare_type_base n1 n2) $ error "multiple returns with different types"
+      _ -> return ()
+      
   updateState (\st -> st { executing = exec })
   case first of
     Just n -> return first
@@ -798,6 +803,11 @@ remaining_stmts =
       Just n -> updateState (\st -> st { executing = False })
       Nothing -> return ()
     next <- remaining_stmts
+    
+    case (a, next) of
+        (Just n1, Just n2) -> unless (compare_type_base n1 n2) $ error "multiple returns with different values"
+        _ -> return ()
+    
     updateState (\st -> st { executing = exec })
     case a of
       Just n -> return a
