@@ -18,7 +18,7 @@ function right_child(index int) int {
 procedure ensure_size(&bst BinarySearchTree, index int) {
     while (length(bst.tree) <= index) {
         data Data;
-        bst.tree = bst.tree + data;
+        push(bst.tree, data);
     }
 }
 
@@ -133,21 +133,21 @@ procedure main() {
     data vector<int>;
     bst BinarySearchTree;
 
-    data = data + 8;
-    data = data + 3;
-    data = data + -5;
-    data = data + 10;
-    data = data + -13;
-    data = data + 4;
-    data = data + 7;
-    data = data + 14;
-    data = data + 13;
+    push(data, 8);
+    push(data, 3);
+    push(data, -5);
+    push(data, 10);
+    push(data, -13);
+    push(data, 4);
+    push(data, 7);
+    push(data, 14);
+    push(data, 13);
 
     print("Inserting into Binary Search Tree: " + data);
     insert_values(bst, data);
 
     print();
-    
+
     level int;
 
     min_val Data = min(bst, level);
