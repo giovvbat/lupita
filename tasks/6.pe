@@ -1,5 +1,10 @@
+struct Data {
+    value int;
+    active bool;
+}
+
 struct BinarySearchTree {
-    tree vector<int>;
+    tree vector<Data>;
 }
 
 function left_child(index int) int {
@@ -12,20 +17,24 @@ function right_child(index int) int {
 
 procedure ensure_size(&bst BinarySearchTree, index int) {
     while (length(bst.tree) <= index) {
-        bst.tree = bst.tree + -1;
+        data Data;
+        bst.tree = bst.tree + data;
     }
 }
 
 procedure insert_recursive(&bst BinarySearchTree, index int, value int) {
     ensure_size(bst, index);
 
-    if (bst.tree[index] == -1) {
-        bst.tree[index] = value;
-    } else {
-        if (value < bst.tree[index]) {
-            insert_recursive(bst, left_child(index), value);
+    if (index < length(bst.tree)) {
+        if (!bst.tree[index].active) {
+            bst.tree[index].value = value;
+            bst.tree[index].active = true;
         } else {
-            insert_recursive(bst, right_child(index), value);
+            if (value < bst.tree[index].value) {
+                insert_recursive(bst, left_child(index), value);
+            } else {
+                insert_recursive(bst, right_child(index), value);
+            }
         }
     }
 }
@@ -40,13 +49,13 @@ procedure insert_values(&bst BinarySearchTree, values vector<int>) {
     }
 }
 
-function min_recursive(bst BinarySearchTree, index int, &level int) int {
+function min_recursive(bst BinarySearchTree, index int, &level int) Data {
     if (index < length(bst.tree)) {
-        if (bst.tree[index] != -1) {
+        if (bst.tree[index].active) {
             left int = left_child(index);
 
             if (left < length(bst.tree)) {
-                if (bst.tree[left] != -1) {
+                if (bst.tree[left].active) {
                     level += 1;
                     return min_recursive(bst, left, level);
                 }
@@ -56,21 +65,22 @@ function min_recursive(bst BinarySearchTree, index int, &level int) int {
         }
     }
 
-    return -1;
+    d Data;
+    return d;
 }
 
-function min(bst BinarySearchTree, &level int) int {
+function min(bst BinarySearchTree, &level int) Data {
     level = 1;
     return min_recursive(bst, 0, level);
 }
 
-function max_recursive(bst BinarySearchTree, index int, &level int) int {
+function max_recursive(bst BinarySearchTree, index int, &level int) Data {
     if (index < length(bst.tree)) {
-        if (bst.tree[index] != -1) {
+        if (bst.tree[index].active) {
             right int = right_child(index);
 
             if (right < length(bst.tree)) {
-                if (bst.tree[right] != -1) {
+                if (bst.tree[right].active) {
                     level += 1;
                     return max_recursive(bst, right, level);
                 }
@@ -80,10 +90,11 @@ function max_recursive(bst BinarySearchTree, index int, &level int) int {
         }
     }
 
-    return -1;
+    d Data;
+    return d;
 }
 
-function max(bst BinarySearchTree, &level int) int {
+function max(bst BinarySearchTree, &level int) Data {
     level = 1;
     return max_recursive(bst, 0, level);
 }
@@ -106,8 +117,8 @@ procedure print_tree_by_level(&bst BinarySearchTree) {
         print("Level " + (level + 1) + ":");
 
         for (i int = start; i < end; i += 1) {
-            if (bst.tree[i] != -1) {
-                print(bst.tree[i]);
+            if (bst.tree[i].active) {
+                print(bst.tree[i].value);
             }
         }
 
@@ -124,9 +135,9 @@ procedure main() {
 
     data = data + 8;
     data = data + 3;
-    data = data + 1;
+    data = data + -5;
     data = data + 10;
-    data = data + 6;
+    data = data + -13;
     data = data + 4;
     data = data + 7;
     data = data + 14;
@@ -139,11 +150,11 @@ procedure main() {
     
     level int;
 
-    min_val int = min(bst, level);
-    print("Min: " + min_val + " at level " + level);
+    min_val Data = min(bst, level);
+    print("Min: " + min_val.value + " at level " + level);
 
-    max_val int = max(bst, level);
-    print("Max: " + max_val + " at level " + level);
+    max_val Data = max(bst, level);
+    print("Max: " + max_val.value + " at level " + level);
 
     print();
 
