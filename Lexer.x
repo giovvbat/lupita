@@ -26,6 +26,8 @@ tokens :-
   enum                                 { \p s -> Enum (getLC p) }
   print                                { \p s -> Print (getLC p) }
   scan                                 { \p s -> Scan (getLC p) }
+  remove                               { \p s -> Remove (getLC p) }
+  push                                 { \p s -> Push (getLC p) }
   count_rows                           { \p s -> CountRows (getLC p) }
   count_columns                        { \p s -> CountCols (getLC p) }
   length                               { \p s -> Length (getLC p) }
@@ -107,6 +109,8 @@ data Token =
   PowAssign (Int, Int) |
   Vectr  (Int, Int) |
   Matrx  (Int, Int) |
+  Remove (Int, Int) |
+  Push (Int, Int) |
   CountRows (Int, Int) |
   CountCols (Int, Int) |
   Length (Int, Int) |

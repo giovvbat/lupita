@@ -1,7 +1,0 @@
-procedure main() {
-    m matrix<int : [2, 2]>;
-
-    m[1, 1] = 1;
-
-    print(m);
-}

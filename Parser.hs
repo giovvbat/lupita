@@ -479,6 +479,18 @@ referenceToken = tokenPrim show update_pos get_token
     get_token (Reference p) = Just (Reference p)
     get_token _ = Nothing
 
+pushToken :: ParsecT [Token] st IO Token
+pushToken = tokenPrim show update_pos get_token
+  where
+    get_token (Push p) = Just (Push p)
+    get_token _ = Nothing
+
+removeToken :: ParsecT [Token] st IO Token
+removeToken = tokenPrim show update_pos get_token
+  where
+    get_token (Remove p) = Just (Remove p)
+    get_token _ = Nothing
+
 update_pos :: SourcePos -> Token -> [Token] -> SourcePos
 update_pos pos _ (next : _) = incSourceColumn pos 1 -- avança um token
 update_pos pos _ [] = pos -- fim do código-fonte
@@ -993,7 +1005,44 @@ procedure_call = try $ do
               symtable_update_by_access_chain toks
                 (lookup_variable (Id name (line, col)) new_state)
         ) params args
-  <|> try print_procedure
+  <|> try native_procedure_call
+
+native_procedure_call :: ParsecT [Token] MemoryState IO ()
+native_procedure_call =
+  try print_procedure
+  <|> try vector_push_procedure
+  <|> try vector_remove_procedure
+
+vector_push_procedure :: ParsecT [Token] MemoryState IO ()
+vector_push_procedure = do
+  Push (line, col) <- pushToken
+  _ <- parenLeftToken
+  vec@(t_ac, as_ac) <- access_chain
+  _ <- commaToken
+  expr <- expression
+  _ <- parenRightToken
+  _ <- semiColonToken
+  case t_ac of
+    Vector t elements -> 
+      if extract_base_type expr == t
+        then updateState (symtable_update_by_access_chain as_ac (Vector t (elements ++ [expr])))
+        else error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values expr ++
+          " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
+    _ -> error $ "cannot apply push function to non-vector variables; line " ++ show line ++ ", column " ++ show col
+
+vector_remove_procedure :: ParsecT [Token] MemoryState IO ()
+vector_remove_procedure = do
+  Remove (line, col) <- removeToken
+  _ <- parenLeftToken
+  vec@(t_ac, as_ac) <- access_chain
+  _ <- parenRightToken
+  _ <- semiColonToken
+  case t_ac of
+    Vector t elements ->
+      if null elements
+        then error $ "cannot remove element from empty vector; line " ++ show line ++ ", column " ++ show col
+        else updateState (symtable_update_by_access_chain as_ac (Vector t (init elements)))
+    _ -> error $ "cannot apply remove function to non-vector variables; line " ++ show line ++ ", column " ++ show col
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
 function_return = do
@@ -1211,14 +1260,6 @@ do_add_op (line, col) = \a b -> case (a, b) of
     | t1 /= t2 -> error $ binary_type_error "+" a b (line, col)
     | rows1 /= rows2 || cols1 /= cols2 ->error $ "size error: matrices with different dimensions cannot be added; line " ++ show line ++ ", column " ++ show col
     | otherwise -> Matrix t1 (zipWith (zipWith (do_add_op (line, col))) elements1 elements2) (rows1, cols1)
-  -- vetor + valor
-  (Vector t elems, val)
-    | (extract_base_type t) /= (extract_base_type val) -> error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values val ++ " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
-    | otherwise -> Vector t (elems ++ [val])
-  -- valor + vetor
-  (val, Vector t elems)
-    | (extract_base_type t) /= (extract_base_type val) -> error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values val ++ " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
-    | otherwise -> Vector t (elems ++ [val])
   -- fallback
   (x, y) -> error $ binary_type_error "+" x y (line, col)
 
@@ -1540,7 +1581,7 @@ function_call = try $ do
         ) params args
 
       return ret
-  <|> try native_function_calls
+  <|> try native_function_call
 
 actual_params :: ParsecT [Token] MemoryState IO [Either (Type, [AccessStep]) Type]
 actual_params = do
@@ -2011,8 +2052,8 @@ matrix_cols_function = do
     Matrix _ _ (_, cols) -> return (Integer cols)
     _ -> error $ "cannot apply count_columns function to non-matrix variables; line " ++ show line ++ ", column " ++ show col
 
-native_function_calls :: ParsecT [Token] MemoryState IO Type
-native_function_calls = 
+native_function_call :: ParsecT [Token] MemoryState IO Type
+native_function_call = 
   try scan_function 
   <|> try vector_length_function
   <|> matrix_rows_function

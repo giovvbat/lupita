@@ -1,0 +1,18 @@
+struct Pessoa {
+    nome string;
+}
+
+procedure teste(p Pessoa) {
+    v vector<Pessoa>;
+    push(v, p);
+    print(v);
+    print(v[0].nome);
+    remove(v);
+    print(v);
+}
+
+procedure main() {
+    p Pessoa;
+    p.nome = "Giovanna";
+    teste(p);
+}

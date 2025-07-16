@@ -38,6 +38,6 @@ procedure main() {
     if (fst_cols == snd_rows) {
         print("product of matrices is: " + (fst_matrix * snd_matrix));
     } else {
-        print("cannot multiplying matrices with given dimensions, please try again!");
+        print("cannot multiply matrices with given dimensions, please try again!");
     }    
 }
