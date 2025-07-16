@@ -688,6 +688,8 @@ procedure = do
             updateState $ local_insert sym (line, col)
         ) d
 
+  updateState $ subprogramtable_insert (Procedure name d []) (line, col)
+
   e <- parenRightToken
   f <- bracketLeftToken
 
@@ -705,8 +707,8 @@ procedure = do
 
   -- registra o procedure na subprogramtable
   let body_tokens = take (length before - length after) before
-  stFinal <- getState
-  putState $ subprogramtable_insert (Procedure name d body_tokens) (line, col) stFinal
+  
+  updateState $ subprogramtable_update (Procedure name d body_tokens)
 
   return [a]
 
@@ -728,6 +730,8 @@ function = do
   f <- all_possible_type_tokens
   g <- bracketLeftToken
 
+  updateState (subprogramtable_insert (Function name d f []) (line, col))
+
   before <- getInput
   h <- stmts
 
@@ -747,7 +751,7 @@ function = do
 
   let body_tokens = take (length before - length after) before
 
-  updateState (subprogramtable_insert (Function name d f body_tokens) (line, col))
+  updateState (subprogramtable_update (Function name d f body_tokens))
   return [a]
 
 param :: ParsecT [Token] MemoryState IO FormalParam
@@ -870,7 +874,8 @@ all_assign_tokens =
   <|>
   try (do
     RemAssign pos@(line, col) <- remAssignToken
-    return do_rem_op
+    s <- getState
+    return (do_rem_op s)
   )
   <|>
   try (do
@@ -965,11 +970,15 @@ procedure_call = try $ do
 
 
       s' <- getState
-      result <- lift $ runParserTWithState stmts s' body_tokens
+      new_state <- if executing s'
+        then do
+          result <- lift $ runParserTWithState stmts s' body_tokens
 
-      new_state <- case result of
-        Left err -> error (show err)
-        Right (_, st') -> return st'
+          case result of
+            Left err -> error (show err)
+            Right (_, st') -> return st'
+        else do
+          return s'
 
       case call_stack s' of
         [] -> error "call_stack unexpectedly empty after procedure call"
@@ -1244,7 +1253,8 @@ mul_div_rem_op =
   <|>
   (do
     Rem (line, col) <- remToken;
-    return (do_rem_op (line, col))
+    s <- getState
+    return (do_rem_op s (line, col))
   )
 
 do_mul_op :: (Int, Int) -> (Type -> Type -> Type)
@@ -1299,8 +1309,12 @@ do_div_op st (line, col) = \a b -> case (a, b) of
   (Floating x, Floating y) -> Floating $ x / y
   (x, y) -> error $ binary_type_error "/" x y (line, col)
 
-do_rem_op :: (Int, Int) -> (Type -> Type -> Type)
-do_rem_op (line, col) = \a b -> case (a, b) of
+do_rem_op :: MemoryState -> (Int, Int) -> (Type -> Type -> Type)
+do_rem_op st (line, col) = \a b -> case (a, b) of
+  (Integer _, Integer 0) -> 
+    if (executing st)
+      then error $ "no mathematical divisions per 0 are allowed; line: " ++ show line ++ "; column: " ++ show col
+      else Integer 0
   (Integer x, Integer y) -> Integer $ x `mod` y
   (x, y) -> error $ binary_type_error "%" x y (line, col)
 
@@ -1494,18 +1508,22 @@ function_call = try $ do
 
         updateState (insert_symbol (formal_name, actual_type, True) (line, col))
         ) params args
-
+      
       s' <- getState
-      result <- lift $ runParserTWithState stmts s' body_tokens
+      (ret, new_state) <- if executing s'
+        then do
+          result <- lift $ runParserTWithState stmts s' body_tokens
 
-      (ret, new_state) <- case result of
-        Left err -> error (show err)
-        Right (Just return_val, new_state) ->
-          if compare_type_base return_type return_val
-            then return (return_val, new_state)
-            else error $ "type error: function \"" ++ function_name ++ "\" expects return type " ++ show_pretty_types return_type ++
-            ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show line ++ ", column: " ++ show col
-        Right (Nothing, _) -> error $ "function \"" ++ function_name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column: " ++ show col
+          case result of
+            Left err -> error (show err)
+            Right (Just return_val, new_state) ->
+              if compare_type_base return_type return_val
+                then return (return_val, new_state)
+                else error $ "type error: function \"" ++ function_name ++ "\" expects return type " ++ show_pretty_types return_type ++
+                ", but got " ++ show_pretty_type_values return_val ++ "; line: " ++ show line ++ ", column: " ++ show col
+            Right (Nothing, _) -> error $ "function \"" ++ function_name ++ "\" expects more return statements than provided; line: " ++ show line ++ ", column: " ++ show col
+        else do
+          return (return_type, s')
 
       case call_stack s' of
         [] -> error "call_stack unexpectedly empty after procedure call"
@@ -2137,6 +2155,12 @@ subprogramtable_insert subprogram (line, col) st@(MemoryState _ _ _ subprogs _ _
   in if already_defined
     then error $ "subprogram \"" ++ name ++ "\" already defined in program; line " ++ show line ++ ", column " ++ show col
     else st { subprogramtable = subprogram : subprogs }
+
+subprogramtable_update :: Subprogram -> MemoryState -> MemoryState
+subprogramtable_update subprogram st@(MemoryState _ _ _ subprogs _ _ _) =
+  let name = get_subprogram_name subprogram
+      new_subprogs = subprogram : filter (\sp -> get_subprogram_name sp /= name) subprogs
+  in st { subprogramtable = new_subprogs }
 
 get_subprogram_name :: Subprogram -> String
 get_subprogram_name subprogram@(Procedure name _ _) = name
