@@ -1,4 +1,4 @@
-procedure mdc(n int, m int, &r int) {
+procedure gcd(n int, m int, &r int) {
     if (m % n == 0) {
         r = n;
     } else {
@@ -6,9 +6,9 @@ procedure mdc(n int, m int, &r int) {
             r = m;
         } else {
             if (m > n) {
-                mdc(n, m % n, r);
+                gcd(n, m % n, r);
             } else {
-                mdc(m, n % m, r);
+                gcd(m, n % m, r);
             }
         }
     }
@@ -17,16 +17,16 @@ procedure mdc(n int, m int, &r int) {
 procedure main() {
     r int;
 
-    print("Digite o valor de n:");
+    print("enter the first natural number:");
     n int = scan();
 
-    print("Digite o valor de m:");
+    print("enter the second natural number:");
     m int = scan();
 
     if (n <= 0 || m <= 0) {
-        print("Erro: ambos os números devem ser positivos.");
+        print("error: both numbers must be positive, please try again!");
     } else {
-        mdc(n, m, r);
-        print("O maior divisor comum entre " + n + " e " + m + " é igual a " + r);
+        gcd(n, m, r);
+        print("greatest common divisor between " + n + " and " + m + " equals: " + r);
     }
 }

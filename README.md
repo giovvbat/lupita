@@ -74,13 +74,13 @@ alex Lexer.x && ghc Parser.hs -o parser
 
 ### Execução
 
-Depois de compilar os arquivos, você pode executar o interpretador Lupita especificando o caminho para o seu arquivo de programa (.pe) (há alguns exemplos de programas na pasta `/tasks`):
+Depois de compilar os arquivos, você pode executar o interpretador Lupita especificando o caminho para o seu arquivo de programa (.lup) (há alguns exemplos de programas na pasta `/tasks`):
 
 ```sh
 # Executando um programa Lupita
-# Substitua <arquivo.pe> pelo caminho do seu programa Lupita
-./parser <arquivo.pe>
+# Substitua <arquivo.lup> pelo caminho do seu programa Lupita
+./parser <arquivo.lup>
 
-# Exemplo: Executar o programa '1.pe' localizado na pasta 'tasks'
-./parser tasks/1.pe
+# Exemplo: Executar o programa '1.lup' localizado na pasta 'tasks'
+./parser tasks/1.lup
 ```

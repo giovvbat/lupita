@@ -1,9 +1,11 @@
+function calculate(x float, y float, c int) float {
+    return x^2 - y + c;
+}
+
 procedure main() {
-    x float = 3.0;
+    x float = 9.0;
     y float = 2.0;
     c int = 3;
-    
-    result guess = x^2 - y + c;
 
-    print("the result is " + result);
+    print("result = " + calculate(x, y, c));
 }

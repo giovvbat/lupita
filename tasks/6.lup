@@ -3,7 +3,7 @@ struct Data {
     active bool;
 }
 
-struct BinarySearchTree {
+struct binary_search_tree {
     tree vector<Data>;
 }
 
@@ -15,14 +15,14 @@ function right_child(index int) int {
     return 2 * index + 2;
 }
 
-procedure ensure_size(&bst BinarySearchTree, index int) {
+procedure ensure_size(&bst binary_search_tree, index int) {
     while (length(bst.tree) <= index) {
         data Data;
         push(bst.tree, data);
     }
 }
 
-procedure insert_recursive(&bst BinarySearchTree, index int, value int) {
+procedure insert_recursive(&bst binary_search_tree, index int, value int) {
     ensure_size(bst, index);
 
     if (index < length(bst.tree)) {
@@ -39,17 +39,17 @@ procedure insert_recursive(&bst BinarySearchTree, index int, value int) {
     }
 }
 
-procedure insert(&bst BinarySearchTree, value int) {
+procedure insert(&bst binary_search_tree, value int) {
     insert_recursive(bst, 0, value);
 }
 
-procedure insert_values(&bst BinarySearchTree, values vector<int>) {
+procedure insert_values(&bst binary_search_tree, values vector<int>) {
     for (i int = 0; i < length(values); i += 1) {
         insert(bst, values[i]);
     }
 }
 
-function min_recursive(bst BinarySearchTree, index int, &level int) Data {
+function min_recursive(bst binary_search_tree, index int, &level int) Data {
     if (index < length(bst.tree)) {
         if (bst.tree[index].active) {
             left int = left_child(index);
@@ -69,12 +69,12 @@ function min_recursive(bst BinarySearchTree, index int, &level int) Data {
     return d;
 }
 
-function min(bst BinarySearchTree, &level int) Data {
+function min(bst binary_search_tree, &level int) Data {
     level = 1;
     return min_recursive(bst, 0, level);
 }
 
-function max_recursive(bst BinarySearchTree, index int, &level int) Data {
+function max_recursive(bst binary_search_tree, index int, &level int) Data {
     if (index < length(bst.tree)) {
         if (bst.tree[index].active) {
             right int = right_child(index);
@@ -94,12 +94,12 @@ function max_recursive(bst BinarySearchTree, index int, &level int) Data {
     return d;
 }
 
-function max(bst BinarySearchTree, &level int) Data {
+function max(bst binary_search_tree, &level int) Data {
     level = 1;
     return max_recursive(bst, 0, level);
 }
 
-procedure print_tree_by_level(&bst BinarySearchTree) {
+procedure print_tree_by_level(&bst binary_search_tree) {
     level int = 0;
     start int = 0;
 
@@ -114,7 +114,7 @@ procedure print_tree_by_level(&bst BinarySearchTree) {
             end = start + count;
         }
 
-        print("Level " + (level + 1) + ":");
+        print("nodes at level " + (level + 1) + ":");
 
         for (i int = start; i < end; i += 1) {
             if (bst.tree[i].active) {
@@ -123,7 +123,6 @@ procedure print_tree_by_level(&bst BinarySearchTree) {
         }
 
         print();
-
         start += count;
         level += 1;
     }
@@ -131,34 +130,35 @@ procedure print_tree_by_level(&bst BinarySearchTree) {
 
 procedure main() {
     data vector<int>;
-    bst BinarySearchTree;
+    bst binary_search_tree;
 
-    push(data, 8);
-    push(data, 3);
-    push(data, -5);
-    push(data, 10);
-    push(data, -13);
-    push(data, 4);
-    push(data, 7);
-    push(data, 14);
-    push(data, 13);
+    print("enter how many nodes are to be inserted in the Binary Search Tree:");
+    n int = scan();
 
-    print("Inserting into Binary Search Tree: " + data);
-    insert_values(bst, data);
+    if (n > 0) {
+        for (i int = 0; i < n; i += 1) {
+            print("enter integer value for current node:");
+            node_value int = scan();
+            push(data, node_value);
+        }
 
-    print();
+        print();
+        print("inserting into Binary Search Tree: " + data);
+        insert_values(bst, data);
+        print();
 
-    level int;
+        level int;
+        min_val Data = min(bst, level);
+        print("min: " + min_val.value + " at level " + level);
 
-    min_val Data = min(bst, level);
-    print("Min: " + min_val.value + " at level " + level);
+        max_val Data = max(bst, level);
+        print("max: " + max_val.value + " at level " + level);
+        print();
 
-    max_val Data = max(bst, level);
-    print("Max: " + max_val.value + " at level " + level);
+        print("printing tree level by level:");
 
-    print();
-
-    print("Printing tree level by level: \n");
-
-    print_tree_by_level(bst);
+        print_tree_by_level(bst);
+    } else {
+        print("number of nodes to be inserted in the Binary Search Tree must be positive, please try again!");
+    }
 }
