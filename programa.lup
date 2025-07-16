@@ -1,18 +1,20 @@
-struct Pessoa {
-    nome string;
-}
 
-procedure teste(p Pessoa) {
-    v vector<Pessoa>;
-    push(v, p);
-    print(v);
-    print(v[0].nome);
+procedure remove_from_vec(&v vector<int>) {
     remove(v);
-    print(v);
 }
 
 procedure main() {
-    p Pessoa;
-    p.nome = "Giovanna";
-    teste(p);
+    v vector<int>;
+    
+    push(v, 10);
+    push(v, 20);
+    push(v, 30);
+    
+    remove_from_vec(v);
+    
+    if (false) {
+        push(v, 40);
+    }
+    
+    print(v);
 }

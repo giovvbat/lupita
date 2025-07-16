@@ -1015,6 +1015,7 @@ native_procedure_call =
 
 vector_push_procedure :: ParsecT [Token] MemoryState IO ()
 vector_push_procedure = do
+  s <- getState
   Push (line, col) <- pushToken
   _ <- parenLeftToken
   vec@(t_ac, as_ac) <- access_chain
@@ -1025,13 +1026,15 @@ vector_push_procedure = do
   case t_ac of
     Vector t elements -> 
       if extract_base_type expr == t
-        then updateState (symtable_update_by_access_chain as_ac (Vector t (elements ++ [expr])))
+        then when (executing s) $
+            updateState (symtable_update_by_access_chain as_ac (Vector t (elements ++ [expr])))
         else error $ "type mismatch: cannot add value of type " ++ show_pretty_type_values expr ++
           " to vector of " ++ show_pretty_types t ++ "; line " ++ show line ++ ", column " ++ show col
     _ -> error $ "cannot apply push function to non-vector variables; line " ++ show line ++ ", column " ++ show col
 
 vector_remove_procedure :: ParsecT [Token] MemoryState IO ()
 vector_remove_procedure = do
+  s <- getState
   Remove (line, col) <- removeToken
   _ <- parenLeftToken
   vec@(t_ac, as_ac) <- access_chain
@@ -1039,9 +1042,10 @@ vector_remove_procedure = do
   _ <- semiColonToken
   case t_ac of
     Vector t elements ->
-      if null elements
-        then error $ "cannot remove element from empty vector; line " ++ show line ++ ", column " ++ show col
-        else updateState (symtable_update_by_access_chain as_ac (Vector t (init elements)))
+      when (executing s) $
+        if null elements
+            then error $ "cannot remove element from empty vector; line " ++ show line ++ ", column " ++ show col
+            else updateState (symtable_update_by_access_chain as_ac (Vector t (init elements)))
     _ -> error $ "cannot apply remove function to non-vector variables; line " ++ show line ++ ", column " ++ show col
 
 function_return :: ParsecT [Token] MemoryState IO (Maybe Type)
