@@ -23,7 +23,6 @@ tokens :-
   ","                                  { \p s -> Comma (getLC p) }
   "."                                  { \p s -> Dot (getLC p) }
   struct                               { \p s -> Struct (getLC p) }
-  enum                                 { \p s -> Enum (getLC p) }
   print                                { \p s -> Print (getLC p) }
   scan                                 { \p s -> Scan (getLC p) }
   remove                               { \p s -> Remove (getLC p) }
@@ -153,7 +152,6 @@ data Token =
   LessEq (Int, Int) |
   Struct (Int, Int) |
   Guess (Int, Int) |
-  Enum (Int, Int) |
   Type String (Int, Int) |
   Id String (Int, Int) |
   Float Float (Int, Int) |

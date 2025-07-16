@@ -26,12 +26,6 @@ import System.Environment
 -- nome -> tabela de simbolos junto com escopo escopo#nome
 -- tipo e valor -> unificados
 
--- runtime stack
-
--- pilha dos escopos
-
--- lista de tipos criados por usuário
---
 -- tabela de subprogramas declarados
 -- nome, parametros, tipo de retorno e código
 
@@ -46,7 +40,7 @@ data PassMode = ByValue | ByReference
 -- nome do parâmetro, tipo, modo de passagem
 type FormalParam = (String, Type, PassMode)
 
-data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] | Enumeration String [(String, Type)] | Vector Type [Type] | Matrix Type [[Type]] (Int, Int)
+data Type = Integer Int | Floating Float | Str String | Boolean Bool | Record String [(String, Type)] |  Vector Type [Type] | Matrix Type [[Type]] (Int, Int)
     deriving (Show, Eq)
 
 -- tipo para distinguir função e procedimento
@@ -60,8 +54,7 @@ type SymbolTable = [Symbol]
 type ScopedSymbolTable = [[Symbol]]
 
 data ActivationRecord = ActivationRecord {
-  local_symbols :: [[Symbol]],               -- pilha de escopos locais (escopo mais recente é o head)
-  static_link :: Maybe ActivationRecord      -- referência estática para o escopo onde foi definido
+  local_symbols :: [[Symbol]]               -- pilha de escopos locais (escopo mais recente é o head)
 } deriving (Show, Eq)
 
 data ScopeType = GlobalScope | LocalScope
@@ -359,12 +352,6 @@ structToken = tokenPrim show update_pos get_token
     get_token (Struct p) = Just (Struct p)
     get_token _ = Nothing
 
-enumToken :: ParsecT [Token] st IO Token
-enumToken = tokenPrim show update_pos get_token
-  where
-    get_token (Enum p) = Just (Enum p)
-    get_token _ = Nothing
-
 typeToken :: ParsecT [Token] st IO Token
 typeToken = tokenPrim show update_pos get_token
   where
@@ -530,7 +517,7 @@ initial_declarations =
   <|> return []
 
 user_defined_types :: ParsecT [Token] MemoryState IO [Token]
-user_defined_types = enum <|> struct
+user_defined_types = struct
 
 struct :: ParsecT [Token] MemoryState IO [Token]
 struct = do
@@ -543,19 +530,6 @@ struct = do
   putState s
   let Id b_name _ = b in do
     updateState (typetable_insert (Record b_name d) (line, col))
-    return ([a] ++ [b] ++ [c] ++ [e])
-
-enum :: ParsecT [Token] MemoryState IO [Token]
-enum = do
-  s <- getState
-  a@(Enum (line, col)) <- enumToken
-  b <- idToken
-  c <- bracketLeftToken
-  d <- user_defined_types_declarations
-  e <- bracketRightToken
-  putState s
-  let Id b_name _ = b in do
-    updateState (typetable_insert (Enumeration b_name d) (line, col))
     return ([a] ++ [b] ++ [c] ++ [e])
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
@@ -662,7 +636,7 @@ const_guess_declaration_assignment = do
 m :: ParsecT [Token] MemoryState IO [Token]
 m = do
   s <- getState
-  let mainAR = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+  let mainAR = ActivationRecord { local_symbols = [[]] }
   putState s {current_scope = LocalScope, executing = True, call_stack = mainAR : call_stack s}
   a <- procedureToken
   b@(Main (line, col)) <- mainToken
@@ -686,7 +660,7 @@ procedure = do
   original_state <- getState
   let flaggedState = original_state { in_procedure = True }
 
-  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+  let newAR = ActivationRecord { local_symbols = [[]] }
   putState flaggedState { call_stack = newAR : call_stack flaggedState, current_scope = LocalScope }
 
   a <- procedureToken
@@ -728,7 +702,7 @@ function :: ParsecT [Token] MemoryState IO [Token]
 function = do
   original_state <- getState
 
-  let newAR = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+  let newAR = ActivationRecord { local_symbols = [[]] }
   putState original_state { call_stack = newAR : call_stack original_state, current_scope = LocalScope }
 
   a <- functionToken
@@ -962,7 +936,7 @@ procedure_call = try $ do
           ByValue -> return ()
         ) params args
 
-      let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+      let new_ar = ActivationRecord { local_symbols = [[]] }
 
       let st' = st { call_stack = new_ar : call_stack st }
       putState st'
@@ -1476,11 +1450,6 @@ user_defined_types_field_access varName (Record name fields) pos = do
   (final_type, rest) <- access_chain_tail varName field_type pos
   return (final_type, AccessField field_token : rest)
 
-user_defined_types_field_access varName (Enumeration name fields) pos = do
-  (field_type, field_token) <- access_from_user_defined_types_fields name fields pos
-  (final_type, rest) <- access_chain_tail varName field_type pos
-  return (final_type, AccessField field_token : rest)
-
 user_defined_types_field_access _ t (line, col) =
   error $ "type " ++ show_pretty_type_values t ++ " does not support field access; line " ++ show line ++ ", column " ++ show col
 
@@ -1536,7 +1505,7 @@ function_call = try $ do
           ByValue -> return ()
         ) params args
 
-      let new_ar = ActivationRecord { local_symbols = [[]], static_link = Nothing }
+      let new_ar = ActivationRecord { local_symbols = [[]] }
 
       let st' = st { call_stack = new_ar : call_stack st }
       putState st'
@@ -2009,7 +1978,6 @@ type_to_string (Str x) = x
 type_to_string (Boolean True) = "true"
 type_to_string (Boolean False) = "false"
 type_to_string (Record name fields) = show_fields fields
-type_to_string (Enumeration name fields) = show_fields fields
 type_to_string (Vector _ elements) = "[" ++ elements_str ++ "]" where elements_str = intercalate ", " (map type_to_string elements)
 type_to_string (Matrix _ elements (line, cols)) = "[" ++ rows_str ++ "]" where
   rows_str = intercalate ", " (map row_to_string elements)
@@ -2108,17 +2076,13 @@ lookup_in_activation_record :: String -> ActivationRecord -> Maybe Type
 lookup_in_activation_record name ar =
   case lookup_in_scopes name (local_symbols ar) of
     Just typ -> Just typ
-    Nothing -> case static_link ar of
-      Just parent_ar -> lookup_in_activation_record name parent_ar
-      Nothing -> Nothing
+    Nothing -> Nothing
 
 lookup_const_in_activation_record :: String -> ActivationRecord -> Maybe Bool
 lookup_const_in_activation_record name ar =
     case lookup_const_in_scopes name (local_symbols ar) of
         Just is_const -> Just is_const
-        Nothing -> case static_link ar of
-            Just parent -> lookup_const_in_activation_record name parent
-            Nothing -> Nothing
+        Nothing -> Nothing
 
 lookup_const_in_scopes :: String -> [[Symbol]] -> Maybe Bool
 lookup_const_in_scopes _ [] = Nothing
@@ -2190,7 +2154,6 @@ lookup_type :: Token -> [Type] -> Type
 lookup_type (Id name (line, column)) [] = error $ "undefined type \"" ++ name ++ "\"; line " ++ show line ++ " column " ++ show column
 lookup_type token@(Id name _) (t : rest) = case t of
   Record name2 _ | name == name2 -> t
-  Enumeration  name2 _ | name == name2 -> t
   _ -> lookup_type token rest
 
 subprogramtable_insert :: Subprogram -> (Int, Int) -> MemoryState -> MemoryState
@@ -2242,17 +2205,6 @@ typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ _ table
       then error $ "type \"" ++ name ++ "\" already defined, alternative name must be provided; line " ++ show line ++ " column " ++ show column
     else if not (null duplicates)
       then error $ "duplicate field names in record " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
-    else st {typetable = table ++ [t]}
-typetable_insert t@(Enumeration name fields) (line, column) st@(MemoryState _ _ table _ _ _ _) =
-  let
-    label_names = map fst fields
-    duplicates = label_names \\ nub label_names
-    existing_type_names = map get_type_name table
-  in
-    if name `elem` existing_type_names
-      then error $ "type \"" ++ name ++ "\" already defined, alternative name must be provided; line " ++ show line ++ " column " ++ show column
-    else if not (null duplicates)
-      then error $ "duplicate labels in enumeration " ++ name ++ ": " ++ show duplicates ++ "; line " ++ show line ++ " column " ++ show column
     else st {typetable = table ++ [t]}
 typetable_insert _ _ st = st  -- ignora outros tipos
 
@@ -2383,14 +2335,6 @@ update_nested_type (Record name fields) (AccessField (Id field_name _) : rest) n
       else (fname, update_nested_type ftype rest new_val pos)
     else (fname, ftype)) fields
 
--- atualiza campo de enumeration
-update_nested_type (Enumeration name fields) (AccessField (Id label_name _) : rest) new_val pos =
-  Enumeration name $ map (\(lname, ltype) ->
-    if lname == label_name then
-      if null rest then (lname, new_val)
-      else (lname, update_nested_type ltype rest new_val pos)
-    else (lname, ltype)) fields
-
 -- atualiza elemento de vetor
 update_nested_type (Vector baseType elems) (AccessIndex idx : rest) new_val pos =
   if idx < 0 || idx >= length elems then
@@ -2439,7 +2383,6 @@ compare_type_base first_type second_type = case (first_type, second_type) of
   (Str _, Str _)             -> True
   (Boolean _, Boolean _)     -> True
   (Record first_record _, Record second_record _) -> first_record == second_record
-  (Enumeration first_enumeration _, Enumeration second_enumeration _) -> first_enumeration == second_enumeration
   (Vector t1 _, Vector t2 _) -> compare_type_base t1 t2
   (Matrix t1 _ (rows, cols), Matrix t2 _ (rows2, cols2)) -> compare_type_base t1 t2 && rows == rows2 && cols == cols2 
   _                          -> False
@@ -2451,7 +2394,6 @@ extract_base_type t = case t of
   Str _ -> Str ""
   Boolean _ -> Boolean False
   Record name fields -> Record name (map (\(fname, ftype) -> (fname, extract_base_type ftype)) fields)
-  Enumeration name values -> Record name (map (\(vname, vtype) -> (vname, extract_base_type vtype)) values)
   Vector inner _ -> Vector (extract_base_type inner) []
   Matrix inner _ (rows, cols) ->
     let base = extract_base_type inner
@@ -2474,7 +2416,6 @@ measure_vector_size _ = error "interal error: expected a vector type!"
 
 get_type_name :: Type -> String
 get_type_name (Record name _) = name
-get_type_name (Enumeration name _) = name
 get_type_name _ = ""
 
 get_id_name :: Token -> String
@@ -2495,7 +2436,6 @@ show_pretty_types t = case t of
   Str _ -> "string"
   Boolean _ -> "bool"
   Record name _ -> name
-  Enumeration name _ -> name
   Matrix inner_type _ (rows, cols) -> "matrix<"++ show_pretty_types inner_type ++ 
     " : " ++ show rows ++ ", " ++ show cols ++ ">"
   Vector inner_type _ -> "vector<" ++ show_pretty_types inner_type ++ ">"
@@ -2507,7 +2447,6 @@ show_pretty_type_values t = case t of
   Str x -> "string (" ++ show x ++ ")"
   Boolean x -> "bool (" ++ map toLower (show x) ++ ")"
   Record name fields -> name ++ " (" ++ show_fields fields ++ ")"
-  Enumeration name values -> name ++ " (" ++ show_fields values ++ ")"
   Vector inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
   Matrix inner_type elements _ -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
 
