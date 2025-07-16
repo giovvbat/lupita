@@ -1,111 +1,43 @@
-function add_matrix(a vector<vector<int>>, b vector<vector<int>>) vector<vector<int>> {
-    rows1 int = length(a);
-    cols1 int = length(a[0]);
-
-    rows2 int = length(b);
-    cols2 int = length(b[0]);
-
-    if (rows1 != rows2 || cols1 != cols2) {
-        print("error while adding matrices with different dimensions");
-        result vector<vector<int>>;
-
-        return result;
-    }
-
-    for (i int = 0; i < rows1; i += 1) {
-        for (j int = 0; j < cols1; j += 1) {
-            a[i][j] += b[i][j];
-        }
-    }
-    
-    return a;
-}
-
-function multiply_matrix(a vector<vector<int>>, b vector<vector<int>>) vector<vector<int>> {
-    rows1 int = length(a);
-    cols1 int = length(a[0]);
-
-    rows2 int = length(b);
-    cols2 int = length(b[0]);
-
-    result vector<vector<int>>;
-
-    if (cols1 != rows2) {
-        print("error while multiplying matrices with following dimensions: " + rows1 + "x" + cols1 + " by " + rows2 + "x" + cols2);
-        return result;
-    }
-
-    for (i int = 0; i < rows1; i += 1) {
-        row vector<int>;
-
-        for (j int = 0; j < cols2; j += 1) {
-            sum int = 0;
-
-            for (k int = 0; k < cols1; k += 1) {
-                sum += a[i][k] * b[k][j];
-            }
-
-            row = row + sum;
-        }
-
-        result = result + row;
-    }
-
-    return result;
-}
-
 procedure main() {
-    m1 vector<vector<int>>;
-    m2 vector<vector<int>>;
-
     print("enter the number of rows for first matrix:");
-    rows1 int = scan();
+    fst_rows int = scan();
+
     print("enter the number of columns for first matrix:");
-    cols1 int = scan();
+    fst_cols int = scan();
 
-    for (i int = 0; i < rows1; i += 1) {
-        line vector<int>;
+    fst_matrix matrix<int : [fst_rows, fst_cols]>;
 
-        for (j int = 0; j < cols1; j += 1) {
+    for (i int = 0; i < fst_rows; i += 1) {
+        for (j int = 0; j < fst_cols; j += 1) {
             print("enter element [" + i + ", " + j + "] for first matrix:");
-            line = line + scan();
+            fst_matrix[i, j] = scan();
         }
-
-        m1 = m1 + line;
     }
 
     print("enter the number of rows for second matrix:");
-    rows2 int = scan();
+    snd_rows int = scan();
+
     print("enter the number of columns for second matrix:");
-    cols2 int = scan();
+    snd_cols int = scan();
 
-    for (i int = 0; i < rows2; i += 1) {
-        line vector<int>;
+    snd_matrix matrix<int : [snd_rows, snd_cols]>;
 
-        for (j int = 0; j < cols2; j += 1) {
+    for (i int = 0; i < snd_rows; i += 1) {
+        for (j int = 0; j < snd_cols; j += 1) {
             print("enter element [" + i + ", " + j + "] for second matrix:");
-            line = line + scan();
+            snd_matrix[i, j] = scan();
         }
-
-        m2 = m2 + line;
     }
 
-    print();
-
-    print("matrix 1: " + m1);
-    print("matrix 2: " + m2);
-
-    print();
-
-    m3 guess = add_matrix(m1, m2);
-
-    if (length(m3) != 0) {
-        print("sum of matrices is: " + m3);
+    if (fst_rows == snd_rows && fst_cols == snd_cols) {
+        print("sum of matrices is: " + (fst_matrix + snd_matrix));
+    } else {
+        print("cannot add matrices with given dimensions, please try again!");
     }
 
-    m4 guess = multiply_matrix(m1, m2);
-
-    if (length(m4) != 0) {
-        print("product of matrices is: " + m4);
-    }
+    if (fst_cols == snd_rows) {
+        print("product of matrices is: " + (fst_matrix * snd_matrix));
+    } else {
+        print("cannot multiplying matrices with given dimensions, please try again!");
+    }    
 }

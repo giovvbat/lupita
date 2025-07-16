@@ -1,15 +1,7 @@
-struct Pessoa {
-    nome string;
-}
-
-procedure teste(v vector<Pessoa>) {
-    print(v[0].nome);
-}
-
 procedure main() {
-    v vector<Pessoa>;
-    p Pessoa;
-    p.nome = "Giovanna";
-    v = v + p;
-    teste(v);
+    m matrix<int : [2, 2]>;
+
+    m[1, 1] = 1;
+
+    print(m);
 }
