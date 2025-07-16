@@ -443,10 +443,16 @@ lengthToken = tokenPrim show update_pos get_token
     get_token (Length p) = Just (Length p)
     get_token _ = Nothing
 
-pushToken :: ParsecT [Token] st IO Token
-pushToken = tokenPrim show update_pos get_token
+countRowsToken :: ParsecT [Token] st IO Token
+countRowsToken = tokenPrim show update_pos get_token
   where
-    get_token (Push p) = Just (Push p)
+    get_token (CountRows p) = Just (CountRows p)
+    get_token _ = Nothing
+
+countColsToken :: ParsecT [Token] st IO Token
+countColsToken = tokenPrim show update_pos get_token
+  where
+    get_token (CountCols p) = Just (CountCols p)
     get_token _ = Nothing
 
 continueToken :: ParsecT [Token] st IO Token
@@ -558,7 +564,7 @@ remaining_user_defined_types_declarations =
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
   try variable_declaration
-  -- <|> try variable_declaration_assignment
+  <|> try variable_declaration_assignment
   <|> try variable_guess_declaration_assignment
 
 variable_declaration :: ParsecT [Token] MemoryState IO (String, Type, Bool)
@@ -1963,24 +1969,36 @@ vector_length_function = do
   _ <- parenLeftToken
   expr <- expression
   _ <- parenRightToken
-  if is_type_vector expr
-    then return (Integer (measure_vector_size expr))
-    else error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
+  case expr of
+    Vector _ _ -> return (Integer (measure_vector_size expr))
+    _ -> error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
 
-vector_push_function :: ParsecT [Token] MemoryState IO Type
-vector_length_function = do
-  Length (line, col) <- push
+matrix_rows_function :: ParsecT [Token] MemoryState IO Type
+matrix_rows_function = do
+  CountRows (line, col) <- countRowsToken
   _ <- parenLeftToken
-  vec <- expression
-  _ <- commaToken
   expr <- expression
   _ <- parenRightToken
-  if is_type_vector expr
-    then return ()
-    else error $ "cannot apply length function to non-vector variables; line " ++ show line ++ ", column " ++ show col
+  case expr of
+    Matrix _ _ (rows, _) -> return (Integer rows)
+    _ -> error $ "cannot apply count_rows function to non-matrix variables; line " ++ show line ++ ", column " ++ show col
+
+matrix_cols_function :: ParsecT [Token] MemoryState IO Type
+matrix_cols_function = do
+  CountCols (line, col) <- countColsToken
+  _ <- parenLeftToken
+  expr <- expression
+  _ <- parenRightToken
+  case expr of
+    Matrix _ _ (_, cols) -> return (Integer cols)
+    _ -> error $ "cannot apply count_columns function to non-matrix variables; line " ++ show line ++ ", column " ++ show col
 
 native_function_calls :: ParsecT [Token] MemoryState IO Type
-native_function_calls = try scan_function <|> try vector_length_function
+native_function_calls = 
+  try scan_function 
+  <|> try vector_length_function
+  <|> matrix_rows_function
+  <|> matrix_cols_function
 
 all_escapes_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 all_escapes_stmts = do
@@ -2363,14 +2381,23 @@ extract_base_type t = case t of
   Floating _ -> Floating 0.0
   Str _ -> Str ""
   Boolean _ -> Boolean False
-  Record name _ -> Record name []
-  Enumeration name _ -> Record name []
-  Vector t _ -> Vector t []
-  Matrix t _ (rows, cols) -> Matrix t [[]] (rows, cols)
+  Record name fields -> Record name (map (\(fname, ftype) -> (fname, extract_base_type ftype)) fields)
+  Enumeration name values -> Record name (map (\(vname, vtype) -> (vname, extract_base_type vtype)) values)
+  Vector inner _ -> Vector (extract_base_type inner) []
+  Matrix inner _ (rows, cols) ->
+    let base = extract_base_type inner
+        row = replicate cols base
+        matrix = replicate rows row
+    in Matrix base matrix (rows, cols)
+
 
 is_type_vector :: Type -> Bool
 is_type_vector (Vector _ _) = True
 is_type_vector _            = False
+
+is_type_matrix :: Type -> Bool
+is_type_matrix (Matrix _ _ _) = True
+is_type_matrix _            = False
 
 measure_vector_size :: Type -> Int
 measure_vector_size (Vector _ elems) = length elems
