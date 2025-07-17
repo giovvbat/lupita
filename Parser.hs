@@ -507,18 +507,56 @@ struct = do
 
 user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 user_defined_types_declarations = do
-  first@(name, t, is_var) <- try variable_declarations
+  first <- try user_defined_types_variable_declarations
   next <- remaining_user_defined_types_declarations
-  return ((name, t) : next)
+  return (first : next)
 
 remaining_user_defined_types_declarations :: ParsecT [Token] MemoryState IO [(String, Type)]
 remaining_user_defined_types_declarations =
   (do
-    first@(name, t, is_var) <- try variable_declarations
+    first <- try user_defined_types_variable_declarations
     rest <- remaining_user_defined_types_declarations
-    return ((name, t) : rest)
+    return (first : rest)
   )
   <|> return []
+
+user_defined_types_variable_declarations :: ParsecT [Token] MemoryState IO (String, Type)
+user_defined_types_variable_declarations =
+  try user_defined_types_variable_declaration
+  <|> try user_defined_types_variable_declaration_assignment
+  <|> try user_defined_types_variable_guess_declaration_assignment
+
+user_defined_types_variable_declaration :: ParsecT [Token] MemoryState IO (String, Type)
+user_defined_types_variable_declaration = do
+  a@(Id name (line, col)) <- idToken
+  b <- all_possible_type_tokens
+  c <- semiColonToken
+  return (name, b)
+
+user_defined_types_variable_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
+user_defined_types_variable_declaration_assignment = do
+  a@(Id name (line, col)) <- idToken
+  b <- all_possible_type_tokens
+  c <- assignToken
+  d <- expression
+  e <- semiColonToken
+  s <- getState
+  let expr_base_type = extract_base_type d
+  let declared_base_type = extract_base_type b
+  if declared_base_type == expr_base_type
+    then do
+      return (name, d)
+    else error $ variable_type_error_msg name b d (line, col)
+
+user_defined_types_variable_guess_declaration_assignment :: ParsecT [Token] MemoryState IO (String, Type)
+user_defined_types_variable_guess_declaration_assignment = do
+  a@(Id name (line, col)) <- idToken
+  b <- guessToken
+  c <- assignToken
+  d <- expression
+  e <- semiColonToken
+  s <- getState
+  return (name, d)
 
 variable_declarations :: ParsecT [Token] MemoryState IO (String, Type, Bool)
 variable_declarations =
@@ -855,10 +893,10 @@ assign = try $ do
 
   maybe_cons <- case token_chain of
     (AccessId tok@(Id _ pos)) : _ -> return tok
-    _ -> fail "internal error: expected access_id as the first access step!"
+    _ -> error "internal error: expected access_id as the first access step!"
 
+  -- verifica se o access_chain é uma constante
   let (Id name (line, col)) = maybe_cons
-
   maybe_const <- is_name_constant maybe_cons
 
   case maybe_const of
@@ -1424,7 +1462,7 @@ indexed_access varName (Vector t elems) (line, col) = do
       if executing s 
         then
           if i < 0 || i >= length elems
-            then error $ "index " ++ show i ++ " out of bounds for vector; line " ++ show line ++ ", column " ++ show col
+            then error $ "index " ++ show i ++ " out of bounds for vector's length; line " ++ show line ++ ", column " ++ show col
             else return (elems !! i, [AccessIndex i])
         else
           return (t, [AccessIndex i])
@@ -2348,7 +2386,7 @@ update_nested_type (Vector baseType elems) (AccessIndex idx : rest) new_val pos 
   else
     Vector baseType (replaceAt idx (update_nested_type (elems !! idx) rest new_val pos) elems)
 
--- Atualiza elemento de matriz
+-- atualiza elemento de matriz
 update_nested_type (Matrix baseType rows (row_count, col_count)) (AccessIndex2D i j : rest) new_val pos =
   if i < 0 || i >= length rows || j < 0 || j >= length (rows !! i) then
     error $ "index (" ++ show i ++ "," ++ show j ++ ") out of bounds in matrix; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
@@ -2427,6 +2465,8 @@ get_id_name _ = ""
 
 extract_matrix_dimensions :: (Type, Type) -> (Int, Int) -> (Int, Int)
 extract_matrix_dimensions (t1, t2) (line, col) = case (t1, t2) of
+  (Integer 0, Integer x) -> error $ "invalid matrix size: both dimensions must be greater than zero, got 0" ++ "x" ++ show x ++ "; line: " ++ show line ++ "; column: " ++ show col
+  (Integer x, Integer 0) -> error $ "invalid matrix size: both dimensions must be greater than zero, got " ++ show x ++ "x0; line: " ++ show line ++ "; column: " ++ show col
   (Integer x, Integer y) -> (x, y)
   _ -> error $ "matrix dimensions must be defined both as int values; line: " ++ show line ++ "; column: " ++ show col
 
@@ -2453,7 +2493,7 @@ show_pretty_type_values t = case t of
   Vector inner_type elements -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
   Matrix inner_type elements _ -> show_pretty_types t ++ " (" ++ type_to_string t ++ ")"
 
--- função auxiliar para imprimir os campos/labels formatados
+-- função auxiliar para imprimir os campos formatados
 
 show_fields :: [(String, Type)] -> String
 show_fields [] = ""
@@ -2492,12 +2532,6 @@ condition_type_error conditional_name t (line, column) =
 
 const_guess_declaration_assignment_error_msg :: (Int, Int) -> String
 const_guess_declaration_assignment_error_msg (line, column) = "constants are of no bindability to user-defined types or data-structures; line: " ++ show line ++ ", column: " ++ show column
-
-
--- print_symtable :: ParsecT [Token] MemoryState IO ()
--- print_symtable = do
---   st <- getState
---   liftIO $ putStrLn ("\nsymtable: " ++ show (symtable st))
 
 print_types :: ParsecT [Token] MemoryState IO ()
 print_types = do

@@ -1,5 +1,18 @@
-w const int = 10;
+struct i {
+    i guess = 10;
+    v matrix<int : [2, 2]>;
+}
+
+procedure teste(teste int) {
+    print("oi");
+}
 
 procedure main() {
-    w = 10;
+    idade i;
+    print(idade);
+    w const int = 9999;
+    print(idade.i);
+    idade.v[0,0] = w;
+    idade.v[0,1] = 909;
+    print(idade.v[0,0]);
 }
