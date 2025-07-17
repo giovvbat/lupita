@@ -70,9 +70,6 @@ tokens :-
   "^"                                  { \p s -> Pow (getLC p) }
   =                                    { \p s -> Assign (getLC p) }
   return                               { \p s -> Return (getLC p) }
-  break                                { \p s -> Break (getLC p) }
-  continue                             { \p s -> Continue (getLC p) }
-  leave                                { \p s -> Leave (getLC p) }
   if                                   { \p s -> If (getLC p) }
   else                                 { \p s -> Else (getLC p) }
   while                                { \p s -> While (getLC p) }

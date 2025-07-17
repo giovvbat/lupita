@@ -50,8 +50,6 @@ data Subprogram = Procedure { proc_name :: String, proc_params :: [FormalParam],
 
 -- nome da variável/constante, tipo e valor, flag para identificar se é variável (true) ou não (constante)
 type Symbol = (String, Type, Bool)
-type SymbolTable = [Symbol]
-type ScopedSymbolTable = [[Symbol]]
 
 data ActivationRecord = ActivationRecord {
   local_symbols :: [[Symbol]]               -- pilha de escopos locais (escopo mais recente é o head)
@@ -63,7 +61,6 @@ data ScopeType = GlobalScope | LocalScope
 data AccessStep = AccessId Token | AccessIndex Int | AccessIndex2D Int Int| AccessField Token
   deriving (Show)
 
-
 data MemoryState = MemoryState {
   globals :: [Symbol],                -- variáveis globais
   call_stack :: [ActivationRecord],   -- pilha de registros de ativação (funções/procedimentos em execução)
@@ -71,7 +68,8 @@ data MemoryState = MemoryState {
   subprogramtable :: [Subprogram],    -- tabela de funções e procedimentos declarados
   executing :: Bool,                  -- flag de execução
   in_procedure :: Bool,               -- flag usada pra validar `return`
-  current_scope :: ScopeType          -- escopo atual: global ou local
+  current_scope :: ScopeType,         -- escopo atual: global ou local
+  last_parsed_function :: Maybe String  -- flag para detectar erros na tipagem do retorno
 } deriving (Show, Eq)
 
 -- parsers para os tokens
@@ -442,24 +440,6 @@ countColsToken = tokenPrim show update_pos get_token
     get_token (CountCols p) = Just (CountCols p)
     get_token _ = Nothing
 
-continueToken :: ParsecT [Token] st IO Token
-continueToken = tokenPrim show update_pos get_token
-  where
-    get_token (Continue p) = Just (Continue p)
-    get_token _ = Nothing
-
-leaveToken :: ParsecT [Token] st IO Token
-leaveToken = tokenPrim show update_pos get_token
-  where
-    get_token (Leave p) = Just (Leave p)
-    get_token _ = Nothing
-
-breakToken :: ParsecT [Token] st IO Token
-breakToken = tokenPrim show update_pos get_token
-  where
-    get_token (Break p) = Just (Break p)
-    get_token _ = Nothing
-
 referenceToken :: ParsecT [Token] st IO Token
 referenceToken = tokenPrim show update_pos get_token
   where
@@ -488,17 +468,13 @@ program :: ParsecT [Token] MemoryState IO ()
 program = do
   a <- initial_declarations
   b <- m
-  -- s <- getState
-  -- print_symtable
-  -- print_types
-  -- print_subprograms
   eof
   return ()
 
 initial_declarations :: ParsecT [Token] MemoryState IO [Token]
 initial_declarations =
   try (do
-    a <- user_defined_types
+    a <- struct
     initial_declarations
   )
   <|>
@@ -515,9 +491,6 @@ initial_declarations =
     initial_declarations
   )
   <|> return []
-
-user_defined_types :: ParsecT [Token] MemoryState IO [Token]
-user_defined_types = struct
 
 struct :: ParsecT [Token] MemoryState IO [Token]
 struct = do
@@ -637,7 +610,7 @@ m :: ParsecT [Token] MemoryState IO [Token]
 m = do
   s <- getState
   let mainAR = ActivationRecord { local_symbols = [[]] }
-  putState s {current_scope = LocalScope, executing = True, call_stack = mainAR : call_stack s}
+  putState s {current_scope = LocalScope, executing = True, call_stack = mainAR : call_stack s }
   a <- procedureToken
   b@(Main (line, col)) <- mainToken
   c <- parenLeftToken
@@ -659,7 +632,6 @@ procedure :: ParsecT [Token] MemoryState IO [Token]
 procedure = do
   original_state <- getState
   let flaggedState = original_state { in_procedure = True }
-
   let newAR = ActivationRecord { local_symbols = [[]] }
   putState flaggedState { call_stack = newAR : call_stack flaggedState, current_scope = LocalScope }
 
@@ -678,14 +650,12 @@ procedure = do
 
   e <- parenRightToken
   f <- bracketLeftToken
-
   before <- getInput
   g <- stmts
-
   after <- getInput
   h <- bracketRightToken
-
   st1 <- getState
+
   let cs = call_stack st1
   case cs of
     [] -> error "call_stack unexpectedly empty when exiting procedure"
@@ -693,15 +663,12 @@ procedure = do
 
   -- registra o procedure na subprogramtable
   let body_tokens = take (length before - length after) before
-  
   updateState $ subprogramtable_update (Procedure name d body_tokens)
-
   return [a]
 
 function :: ParsecT [Token] MemoryState IO [Token]
 function = do
   original_state <- getState
-
   let newAR = ActivationRecord { local_symbols = [[]] }
   putState original_state { call_stack = newAR : call_stack original_state, current_scope = LocalScope }
 
@@ -719,15 +686,16 @@ function = do
   updateState (subprogramtable_insert (Function name d f []) (line, col))
 
   before <- getInput
+  st0 <- getState
+  putState st0 { last_parsed_function = Just name }
   h <- stmts
-
   after <- getInput
   j <- bracketRightToken
-
   st1 <- getState
   let cs = call_stack st1
+
   case cs of
-    [] -> error "call_stack unexpectedly empty when exiting function"
+    [] -> error "internal error: call_stack unexpectedly empty when exiting function!"
     (_ar : rest) -> putState $ st1 { call_stack = rest, current_scope = GlobalScope }
 
   case h of
@@ -736,8 +704,9 @@ function = do
       show_pretty_types f ++ ", but got " ++ show_pretty_type_values t ++ "; line: " ++ show line ++ ", column " ++ show col
 
   let body_tokens = take (length before - length after) before
-
   updateState (subprogramtable_update (Function name d f body_tokens))
+  st_final <- getState
+  putState st_final { last_parsed_function = Just name }
   return [a]
 
 param :: ParsecT [Token] MemoryState IO FormalParam
@@ -759,7 +728,7 @@ param =
 
 params :: ParsecT [Token] MemoryState IO [FormalParam]
 params =
-  (do
+  try (do
     first <- param
     next <- remainingParams
     return (first : next)
@@ -768,7 +737,7 @@ params =
 
 remainingParams :: ParsecT [Token] MemoryState IO [FormalParam]
 remainingParams =
-  (do
+  try (do
     a <- commaToken
     b <- param
     c <- remainingParams
@@ -780,35 +749,31 @@ stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 stmts = do
   first <- stmt
   exec <- executing <$> getState
+  
   case first of
     Just n -> updateState (\st -> st { executing = False })
     Nothing -> return ()
+
   next <- remaining_stmts
-  
-  case (first, next) of
-      (Just n1, Just n2) -> unless (compare_type_base n1 n2) $ error "multiple returns with different types"
-      _ -> return ()
-      
   updateState (\st -> st { executing = exec })
+
   case first of
     Just n -> return first
     Nothing -> return next
 
 remaining_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
 remaining_stmts =
-  (do
+  try (do
     a <- stmt
     exec <- executing <$> getState
+
     case a of
       Just n -> updateState (\st -> st { executing = False })
       Nothing -> return ()
+
     next <- remaining_stmts
-    
-    case (a, next) of
-        (Just n1, Just n2) -> unless (compare_type_base n1 n2) $ error "multiple returns with different values"
-        _ -> return ()
-    
     updateState (\st -> st { executing = exec })
+
     case a of
       Just n -> return a
       Nothing -> return next
@@ -818,7 +783,6 @@ remaining_stmts =
 stmt :: ParsecT [Token] MemoryState IO (Maybe Type)
 stmt =
   try loop
-  <|> try all_escapes_stmts
   <|> try conditional
   <|>
   try (do
@@ -837,8 +801,7 @@ stmt =
   )
   <|> try function_return
   --- obs.: manter assign por último! caso contrário, podemos ter conflito com o access_chain nas declarações de constantes/variáveis
-  <|>
-  try assign
+  <|> try assign
 
 all_assign_tokens :: ParsecT [Token] MemoryState IO ((Int, Int) -> Type -> Type -> Type)
 all_assign_tokens =
@@ -889,34 +852,50 @@ assign = try $ do
   b <- expression
   _ <- semiColonToken
   s <- getState
-  (Id _ (line, col)) <- case token_chain of
+
+  maybe_cons <- case token_chain of
     (AccessId tok@(Id _ pos)) : _ -> return tok
     _ -> fail "internal error: expected access_id as the first access step!"
+
+  let (Id name (line, col)) = maybe_cons
+
+  maybe_const <- is_name_constant maybe_cons
+
+  case maybe_const of
+    Just True -> error $ "cannot assign to constant \"" ++ name ++ "\"; line: " ++ show line ++ ", column: " ++ show col
+    Just False -> return ()
+    Nothing -> error "internal error: name does not exist!"
+
   let access_base_type = extract_base_type access_type
       expr_base_type = extract_base_type b
       new_value = assign_function (line, col) access_type b
+
   if access_base_type == expr_base_type
     then do
-      when (executing s) $
+      when (executing s) $ do
         updateState (symtable_update_by_access_chain token_chain new_value)
+        forceState
       return Nothing
     else
       error $ assign_type_error_msg access_type b (line, col)
 
+forceState :: ParsecT [Token] MemoryState IO ()
+forceState = do
+  s <- getState
+  s `seq` return ()
+
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call = try $ do
   Id proc_name (line, col) <- idToken
-
   lookAhead parenLeftToken
-
   st <- getState
   let maybe_proc = find (\sp -> case sp of
                                   Procedure name _ _ -> name == proc_name
                                   _ -> False) (subprogramtable st)
+
   case maybe_proc of
     Nothing -> error $ "procedure \"" ++ proc_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
     Just (Procedure _ params body_tokens) -> do
-
       parenLeftToken
       args <- actual_params <|> return []
       parenRightToken
@@ -947,7 +926,6 @@ procedure_call = try $ do
         ) params args
 
       let new_ar = ActivationRecord { local_symbols = [[]] }
-
       let st' = st { call_stack = new_ar : call_stack st }
       putState st'
 
@@ -969,7 +947,6 @@ procedure_call = try $ do
       new_state <- if executing s'
         then do
           result <- lift $ runParserTWithState stmts s' body_tokens
-
           case result of
             Left err -> error (show err)
             Right (_, st') -> return st'
@@ -977,7 +954,7 @@ procedure_call = try $ do
           return s'
 
       case call_stack s' of
-        [] -> error "call_stack unexpectedly empty after procedure call"
+        [] -> error "internal error: call_stack unexpectedly empty after procedure call!"
         (_ : rest) -> putState $ new_state { call_stack = rest }
 
       zipWithM_ (\(name, _, passmode) param -> do
@@ -1007,6 +984,7 @@ vector_push_procedure = do
   expr <- expression
   _ <- parenRightToken
   _ <- semiColonToken
+
   case t_ac of
     Vector t elements -> 
       if extract_base_type expr == t
@@ -1024,6 +1002,7 @@ vector_remove_procedure = do
   vec@(t_ac, as_ac) <- access_chain
   _ <- parenRightToken
   _ <- semiColonToken
+
   case t_ac of
     Vector t elements ->
       when (executing s) $
@@ -1039,8 +1018,27 @@ function_return = do
   when (in_procedure st) $
     error $ "return statements are not allowed among procedures; line: " ++ show line ++ ", column: " ++ show col
   b <- expression
+
+  when (not (executing st)) $
+    case last_parsed_function st of
+      Just name -> do
+        let maybe_func = find (\sp -> case sp of
+                                        Function fname _ _ _ -> fname == name
+                                        _ -> False)
+                              (subprogramtable st)
+        case maybe_func of 
+          Just (Function of_name _ return_type _) ->
+            if extract_base_type return_type /= extract_base_type b
+              then error $ "type error: function \"" ++ of_name ++ "\" expects return type " ++ show_pretty_types return_type ++
+                ", but got " ++ show_pretty_types b ++ "; line: " ++ show line ++ ", column: " ++ show col
+              else return ()
+          _ -> error $ "function not found in subprogram table; line: " ++ show line ++ ", column: " ++ show col
+
+      _ -> error $ "no function context for return statement; line: " ++ show line ++ ", column: " ++ show col
+
   c <- semiColonToken
   return (Just b)
+
 
 expressions :: ParsecT [Token] MemoryState IO [Type]
 expressions = do
@@ -1050,7 +1048,7 @@ expressions = do
 
 remaining_expressions :: ParsecT [Token] MemoryState IO [Type]
 remaining_expressions =
-  (do
+  try (do
     a <- commaToken
     b <- expression
     c <- remaining_expressions
@@ -1367,7 +1365,7 @@ unary_ops =
     Sub (line, col) <- subToken;
     return (do_neg_op (line, col))
   )
-    <|>
+  <|>
   (do
     Not (line, col) <- notToken;
     return (do_not_op (line, col))
@@ -1459,7 +1457,6 @@ user_defined_types_field_access varName (Record name fields) pos = do
   (field_type, field_token) <- access_from_user_defined_types_fields name fields pos
   (final_type, rest) <- access_chain_tail varName field_type pos
   return (final_type, AccessField field_token : rest)
-
 user_defined_types_field_access _ t (line, col) =
   error $ "type " ++ show_pretty_type_values t ++ " does not support field access; line " ++ show line ++ ", column " ++ show col
 
@@ -1474,9 +1471,7 @@ access_from_user_defined_types_fields type_name entries _ = do
 function_call :: ParsecT [Token] MemoryState IO Type
 function_call = try $ do
   Id function_name (line, col) <- idToken
-
   lookAhead parenLeftToken
-
   st <- getState
   let maybe_func = find (\sp -> case sp of
                                   Function name _ _ _ -> name == function_name
@@ -1485,8 +1480,6 @@ function_call = try $ do
   case maybe_func of
     Nothing -> error $ "function \"" ++ function_name ++ "\" not declared; line " ++ show line ++ " column " ++ show col
     Just (Function _ params return_type body_tokens) -> do
-
-
       parenLeftToken
       args <- actual_params <|> return []
       parenRightToken
@@ -1516,7 +1509,6 @@ function_call = try $ do
         ) params args
 
       let new_ar = ActivationRecord { local_symbols = [[]] }
-
       let st' = st { call_stack = new_ar : call_stack st }
       putState st'
 
@@ -1574,7 +1566,7 @@ actual_params = do
 
 remaining_params :: ParsecT [Token] MemoryState IO [Either (Type, [AccessStep]) Type]
 remaining_params =
-  (do
+  try (do
     a <- commaToken
     b <- actual_param
     c <- remaining_params
@@ -1609,13 +1601,18 @@ while = do
   let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
   e <- bracketLeftToken
   inputBefore <- getInput
+
   updateState (\st -> st { executing = False })
   updateState enter_scope
+
   f <- stmts
+
   updateState exit_scope
   updateState (\st -> st { executing = exec })
+
   inputAfter <- getInput
   g <- bracketRightToken
+
   let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
   if exec 
     then run_loop False condTokens bodyTokens [] (line, column) Nothing
@@ -1627,9 +1624,11 @@ repeat_until = do
     a <- repeatToken
     b <- bracketLeftToken
     inputBefore <- getInput
+
     updateState enter_scope
     c <- stmts
     updateState exit_scope
+
     inputAfter <- getInput
     d <- bracketRightToken
     e <- untilToken
@@ -1639,6 +1638,7 @@ repeat_until = do
     inputAfterCond <- getInput
     h <- parenRightToken
     j <- semiColonToken
+
     let bodyTokens = take (length inputBefore - length inputAfter) inputBefore
     let condTokens = take (length inputBeforeCond - length inputAfterCond) inputBeforeCond
     if exec 
@@ -1692,6 +1692,7 @@ for = do
   cond <- expression
   inputAfterCond <- getInput
   e <- semiColonToken
+
   beforeAssign <- getState
   inputBeforeAssign <- getInput
   _ <- for_assign
@@ -1701,11 +1702,15 @@ for = do
   h <- bracketLeftToken
   exec <- executing <$> getState
   inputBeforeBody <- getInput
+
   updateState (\st -> st { executing = False })
   updateState enter_scope
+
   body <- stmts
+
   updateState exit_scope
   updateState (\st -> st { executing = exec })
+
   inputAfterBody <- getInput
   j <- bracketRightToken
 
@@ -1781,12 +1786,14 @@ cond_if = do
   b@(ParenLeft (line, column)) <- parenLeftToken
   cond <- expression
   d <- parenRightToken
+
   let result = check_condition "if" (line, column) cond
   condBool <- case result of
     Left err -> fail err
     Right cond -> do
       unless cond $ updateState (\st -> st { executing = False })
       return cond
+
   e <- bracketLeftToken
   updateState enter_scope
   return_type <- stmts
@@ -1828,7 +1835,6 @@ match_case = do
   _ <- parenRightToken
   _ <- bracketLeftToken
   (return_type, matched_total) <- cases expr
-
   h <- bracketRightToken
   return return_type
 
@@ -1839,7 +1845,6 @@ cases expr =
   try (do
     (a, matched_first) <- single_case expr False
     (has_next, b, matched_total) <- remaining_cases expr matched_first
-
 
     let return_value = if matched_first then a else b
 
@@ -1881,9 +1886,12 @@ single_case expr matched = do
   a <- caseToken
   cond <- case_expression expr
   c <- colonToken
+
   when (not cond || matched) $
     updateState (\st -> st { executing = False });
+
   d <- stmts
+  
   updateState (\st -> st { executing = exec })
   return (d, cond || matched)
 
@@ -2041,14 +2049,6 @@ native_function_call =
   <|> matrix_rows_function
   <|> matrix_cols_function
 
-all_escapes_stmts :: ParsecT [Token] MemoryState IO (Maybe Type)
-all_escapes_stmts = do
-  a <- continueToken <|> leaveToken <|> breakToken
-  b <- semiColonToken
-  return Nothing
-
--- funções para a nova tabela de símbolos
-
 lookup_variable :: Token -> MemoryState -> Type
 lookup_variable (Id name (line, column)) st =
   -- tenta achar nas variáveis globais
@@ -2090,21 +2090,21 @@ lookup_in_activation_record name ar =
 
 lookup_const_in_activation_record :: String -> ActivationRecord -> Maybe Bool
 lookup_const_in_activation_record name ar =
-    case lookup_const_in_scopes name (local_symbols ar) of
-        Just is_const -> Just is_const
-        Nothing -> Nothing
+  case lookup_const_in_scopes name (local_symbols ar) of
+      Just is_const -> Just is_const
+      Nothing -> Nothing
 
 lookup_const_in_scopes :: String -> [[Symbol]] -> Maybe Bool
 lookup_const_in_scopes _ [] = Nothing
 lookup_const_in_scopes name (scope:rest) =
-    case find (\(n, _, _) -> n == name) scope of
-        Just (_, _, is_var) -> Just (not is_var)
-        Nothing -> lookup_const_in_scopes name rest
+  case find (\(n, _, _) -> n == name) scope of
+      Just (_, _, is_var) -> Just (not is_var)
+      Nothing -> lookup_const_in_scopes name rest
 
 enter_scope :: MemoryState -> MemoryState
 enter_scope st =
   case call_stack st of
-    [] -> error "no active activation record to enter scope"
+    [] -> error "interal error: no active activation record to enter scope!"
     (ar : rest) ->
       let updated_locals = [] : local_symbols ar  -- empilha novo escopo vazio
           updatedAR = ar { local_symbols = updated_locals }
@@ -2113,10 +2113,10 @@ enter_scope st =
 exit_scope :: MemoryState -> MemoryState
 exit_scope st =
   case call_stack st of
-    [] -> error "no active activation record to exit scope"
+    [] -> error "interal error: no active activation record to exit scope!"
     (ar : rest) ->
       case local_symbols ar of
-        [] -> error "no local scopes to exit"
+        [] -> error "internal error: no local scopes to exit!"
         (_ : remaining_scopes) ->
           let updatedAR = ar { local_symbols = remaining_scopes }
           in st { call_stack = updatedAR : rest }
@@ -2132,7 +2132,7 @@ get_type_value (Int x _) _ = Integer x
 get_type_value (String x _) _ = Str x
 get_type_value (Float x _) _ = Floating x
 get_type_value (Bool x _) _ = Boolean x
-get_type_value token@(Id x _) (MemoryState _ _ table _ _ _ _) = lookup_type token table
+get_type_value token@(Id x _) (MemoryState _ _ table _ _ _ _ _) = lookup_type token table
 
 get_matrix_value :: Token -> Type -> (Int, Int) -> Type
 get_matrix_value token inner_type (rows, cols) =
@@ -2167,7 +2167,7 @@ lookup_type token@(Id name _) (t : rest) = case t of
   _ -> lookup_type token rest
 
 subprogramtable_insert :: Subprogram -> (Int, Int) -> MemoryState -> MemoryState
-subprogramtable_insert subprogram (line, col) st@(MemoryState _ _ _ subprogs _ _ _) =
+subprogramtable_insert subprogram (line, col) st@(MemoryState _ _ _ subprogs _ _ _ _) =
   let name = get_subprogram_name subprogram
       already_defined = any (\sp -> get_subprogram_name sp == name) subprogs
   in if already_defined
@@ -2175,7 +2175,7 @@ subprogramtable_insert subprogram (line, col) st@(MemoryState _ _ _ subprogs _ _
     else st { subprogramtable = subprogram : subprogs }
 
 subprogramtable_update :: Subprogram -> MemoryState -> MemoryState
-subprogramtable_update subprogram st@(MemoryState _ _ _ subprogs _ _ _) =
+subprogramtable_update subprogram st@(MemoryState _ _ _ subprogs _ _ _ _) =
   let name = get_subprogram_name subprogram
       new_subprogs = subprogram : filter (\sp -> get_subprogram_name sp /= name) subprogs
   in st { subprogramtable = new_subprogs }
@@ -2205,7 +2205,7 @@ lookup_procedure token@(Id name (line, column)) (t : rest) = do
     _ -> lookup_procedure token rest
 
 typetable_insert :: Type -> (Int, Int) -> MemoryState -> MemoryState
-typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ _ table _ _ _ _) =
+typetable_insert t@(Record name fields) (line, column) st@(MemoryState _ _ table _ _ _ _ _) =
   let
     field_names = map fst fields
     duplicates = field_names \\ nub field_names
@@ -2234,10 +2234,10 @@ insert_symbol sym (line, column) st =
 local_insert :: Symbol -> (Int, Int) -> MemoryState -> MemoryState
 local_insert symbol@(name, _, _) (line, column) st =
   case call_stack st of
-    [] -> error "internal error: no active scope to insert variable"
+    [] -> error "internal error: no active scope to insert variable!"
     (ar : rest) ->
       case local_symbols ar of
-        [] -> error "internal error: no local scopes found in current activation record"
+        [] -> error "internal error: no local scopes found in current activation record!"
         scopes ->
           let
             in_local = any (elemName name) scopes
@@ -2259,30 +2259,30 @@ local_insert symbol@(name, _, _) (line, column) st =
 symtable_update_by_access_chain :: [AccessStep] -> Type -> MemoryState -> MemoryState
 symtable_update_by_access_chain [] _ st = st -- nada a fazer
 
--- caso final: só AccessId = variável simples
+-- caso final: só accessid = variável simples
 symtable_update_by_access_chain [AccessId idTok@(Id name pos)] new_val st =
   symtable_update (idTok, new_val) st
 
--- caso geral: primeiro é AccessId (variável base), resto é cadeia aninhada
+-- caso geral: primeiro é accessid (variável base), resto é cadeia aninhada
 symtable_update_by_access_chain (AccessId baseId@(Id base_name pos) : rest) new_val st =
   case call_stack st of
-    [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name
+    [] -> error $ "internal error: no activation record found; cannot update variable " ++ base_name ++ "!"
     (ar : restStack) ->
       let localScopes = local_symbols ar
           foundLocal = findSymbolInScopes base_name localScopes
           updatedLocals = case foundLocal of
             Nothing -> localScopes
-            Just _  -> updateSymbolInScopes base_name (updateNestedTypeInSymbol rest new_val pos) localScopes
+            Just _  -> updateSymbolInScopes base_name (updateNestedTypeInSymbol rest new_val pos) localScopes pos
       in case foundLocal of
           Just _ ->
             let updatedAR = ar { local_symbols = updatedLocals }
             in st { call_stack = updatedAR : restStack }
           Nothing ->
             case lookup base_name [(n, v) | (n, v, _) <- globals st] of
-              Nothing -> error $ "undefined variable \"" ++ base_name ++ "\"; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
+              Nothing -> error $ "undefined variable \"" ++ base_name ++ "\" in scope; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
               Just baseType ->
                 let updatedType = update_nested_type baseType rest new_val pos
-                    updatedGlobals = updateEntry base_name updatedType (globals st)
+                    updatedGlobals = updateEntry base_name updatedType (globals st) pos
                 in st { globals = updatedGlobals }
 
 symtable_update_by_access_chain _ _ st = st -- fallback seguro
@@ -2291,20 +2291,20 @@ symtable_update_by_access_chain _ _ st = st -- fallback seguro
 symtable_update :: (Token, Type) -> MemoryState -> MemoryState
 symtable_update (Id id_name pos, new_value) st =
   case call_stack st of
-    [] -> error $ "no activation record; variable \"" ++ id_name ++ "\" not found"
+    [] -> error $ "interal error: no activation record; variable \"" ++ id_name ++ "\" not found!"
     (ar : restStack) ->
       let localScopes = local_symbols ar
           foundLocal = findSymbolInScopes id_name localScopes
       in case foundLocal of
         Just _ ->
-          let updatedLocals = updateSymbolInScopes id_name (const new_value) localScopes
+          let updatedLocals = updateSymbolInScopes id_name (const new_value) localScopes pos
               updatedAR = ar { local_symbols = updatedLocals }
           in st { call_stack = updatedAR : restStack }
         Nothing ->
           case lookup id_name [(n, t) | (n, t, _) <- globals st] of
             Nothing -> error $ "variable \"" ++ id_name ++ "\" not found in scope; line " ++ show (fst pos) ++ " column " ++ show (snd pos)
             Just _ ->
-              let updatedGlobals = updateEntry id_name new_value (globals st)
+              let updatedGlobals = updateEntry id_name new_value (globals st) pos
               in st { globals = updatedGlobals }
 
 symtable_update _ st = st
@@ -2318,25 +2318,29 @@ findSymbolInScopes name (scope:rest) =
     Nothing  -> findSymbolInScopes name rest
 
 -- atualiza tipo do símbolo na primeira ocorrência encontrada na lista de escopos
-updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> [[Symbol]]
-updateSymbolInScopes _ _ [] = []
-updateSymbolInScopes name f (scope:rest) =
-  if any (\(n, _, _) -> n == name) scope
-    then map (\(n, t, isVar) -> if n == name then (n, f t, isVar) else (n, t, isVar)) scope : rest
-    else scope : updateSymbolInScopes name f rest
+updateSymbolInScopes :: String -> (Type -> Type) -> [[Symbol]] -> (Int, Int) -> [[Symbol]]
+updateSymbolInScopes _ _ [] _ = []
+updateSymbolInScopes name f (scope:rest) (line, col) =
+  if any (\(n, _, _) -> n == name) scope then map (\(n, t, isVar) ->
+    if n == name
+      then if isVar
+        then (n, f t, isVar)     -- só aqui substitui o tipo
+        else error $ "cannot assign to constant \"" ++ name ++ "\"; line: " ++ show line ++ ", column: " ++ show col
+      else (n, t, isVar)
+    ) scope : rest
+    else scope : updateSymbolInScopes name f rest (line, col)
 
 -- atualiza entrada (global) com novo tipo para variável
-updateEntry :: String -> Type -> [Symbol] -> [Symbol]
-updateEntry _ _ [] = []
-updateEntry name newVal ((n, t, isVar) : rest)
+updateEntry :: String -> Type -> [Symbol] -> (Int, Int) -> [Symbol]
+updateEntry _ _ [] _ = []
+updateEntry name newVal ((n, t, isVar) : rest) (line, col)
   | n == name =
-    if not isVar then error $ "cannot assign to constant \"" ++ name ++ "\""
+    if not isVar then error $ "cannot assign to global constant \"" ++ name ++ "\"; line: " ++ show line ++ ", column: " ++ show col
     else (n, newVal, isVar) : rest
-  | otherwise = (n, t, isVar) : updateEntry name newVal rest
+  | otherwise = (n, t, isVar) : updateEntry name newVal rest (line, col)
 
 -- atualiza tipo aninhado (recursivamente) pela cadeia de AccessStep
 update_nested_type :: Type -> [AccessStep] -> Type -> (Int, Int) -> Type
-
 -- atualiza campo de record
 update_nested_type (Record name fields) (AccessField (Id field_name _) : rest) new_val pos =
   Record name $ map (\(fname, ftype) ->
@@ -2410,7 +2414,6 @@ extract_base_type t = case t of
         row = replicate cols base
         matrix = replicate rows row
     in Matrix base matrix (rows, cols)
-
 
 is_type_vector :: Type -> Bool
 is_type_vector (Vector _ _) = True
@@ -2530,7 +2533,7 @@ runParserTWithState parser initialState tokens = do
 -- invocação do parser para o símbolo de partida
 
 parser :: [Token] -> IO (Either ParseError ())
-parser = runParserT program (MemoryState { globals = [], call_stack = [] , typetable = [], subprogramtable = [], executing = False, in_procedure = False, current_scope = GlobalScope}) "Parsing error!"
+parser = runParserT program (MemoryState { globals = [], call_stack = [] , typetable = [], subprogramtable = [], executing = False, in_procedure = False, current_scope = GlobalScope, last_parsed_function = Nothing }) "Parsing error!"
 
 main :: IO ()
 main = do
