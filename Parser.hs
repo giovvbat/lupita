@@ -874,15 +874,9 @@ assign = try $ do
     then do
       when (executing s) $ do
         updateState (symtable_update_by_access_chain token_chain new_value)
-        forceState
       return Nothing
     else
       error $ assign_type_error_msg access_type b (line, col)
-
-forceState :: ParsecT [Token] MemoryState IO ()
-forceState = do
-  s <- getState
-  s `seq` return ()
 
 procedure_call :: ParsecT [Token] MemoryState IO ()
 procedure_call = try $ do
@@ -2323,9 +2317,7 @@ updateSymbolInScopes _ _ [] _ = []
 updateSymbolInScopes name f (scope:rest) (line, col) =
   if any (\(n, _, _) -> n == name) scope then map (\(n, t, isVar) ->
     if n == name
-      then if isVar
-        then (n, f t, isVar)     -- só aqui substitui o tipo
-        else error $ "cannot assign to constant \"" ++ name ++ "\"; line: " ++ show line ++ ", column: " ++ show col
+      then (n, f t, isVar)
       else (n, t, isVar)
     ) scope : rest
     else scope : updateSymbolInScopes name f rest (line, col)
@@ -2334,9 +2326,7 @@ updateSymbolInScopes name f (scope:rest) (line, col) =
 updateEntry :: String -> Type -> [Symbol] -> (Int, Int) -> [Symbol]
 updateEntry _ _ [] _ = []
 updateEntry name newVal ((n, t, isVar) : rest) (line, col)
-  | n == name =
-    if not isVar then error $ "cannot assign to global constant \"" ++ name ++ "\"; line: " ++ show line ++ ", column: " ++ show col
-    else (n, newVal, isVar) : rest
+  | n == name = (n, newVal, isVar) : rest
   | otherwise = (n, t, isVar) : updateEntry name newVal rest (line, col)
 
 -- atualiza tipo aninhado (recursivamente) pela cadeia de AccessStep
@@ -2502,6 +2492,7 @@ condition_type_error conditional_name t (line, column) =
 
 const_guess_declaration_assignment_error_msg :: (Int, Int) -> String
 const_guess_declaration_assignment_error_msg (line, column) = "constants are of no bindability to user-defined types or data-structures; line: " ++ show line ++ ", column: " ++ show column
+
 
 -- print_symtable :: ParsecT [Token] MemoryState IO ()
 -- print_symtable = do

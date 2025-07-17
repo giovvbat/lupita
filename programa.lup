@@ -1,6 +1,5 @@
-w const bool = false;
+w const int = 10;
 
 procedure main() {
-    p const int = 5;
-    w = true;
+    w = 10;
 }
